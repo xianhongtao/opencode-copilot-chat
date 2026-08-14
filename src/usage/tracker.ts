@@ -79,7 +79,7 @@ export interface UsageSummary {
   codebase: UsageDaily;
   hasData: boolean;
   /** When true, cost data comes from the OpenCode CLI SQLite database
-          (actual billed amounts). When false, costs are estimated locally. */
+            (actual billed amounts). When false, costs are estimated locally. */
   sqliteAvailable: boolean;
 }
 
