@@ -1,6 +1,27 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
 
-**Branch:** `refactor/thinking-request-modules` | **Updated:** 2026-08-13 Asia/Jakarta | **Current Phase:** thinking refactor + request module split (6 commits, PR pending); prior: Autocomplete (#49) + central-config/usage refactor (#138) merged on `main` HEAD `616d6f6`.
+**Branch:** `refactor/split-god-files` | **Updated:** 2026-08-14 Asia/Jakarta | **Current Phase:** god-file split complete (12 commits on `refactor/split-god-files`, ahead of `main`); prior: thinking refactor + request module split merged on `main` HEAD `f5439bb`.
+
+---
+
+## ✅ God-file split — usage/ + transports/ + provider/ + models/ + commands/ — 2026-08-14
+
+**Branch:** `refactor/split-god-files` (12 commits ahead of `main`, PR pending)
+
+**Action:** Split the three god files into domain modules per `docs/architecture/02-20260809-provider-adapter-architecture.md`, pure mechanical (cut-paste, zero behavior change). Phase-gated: each commit passes `npm run compile` + `npm test` (291) + `npm run lint`.
+
+**What:**
+
+1. **`src/usage/`** (from `goUsageTracker.ts` 1510 → split): `tracker.ts` (class + types + time helpers), `history.ts` (OpenCode CLI SQLite read/aggregation, pure), `pricing.ts` (bundled cost snapshot + `estimateCost`, pure), `formatting.ts` (status-bar/quick-pick), `dashboard.ts` (usage state + status bar + webview incl. the 583-line HTML template + tooltip SVG). Moved `usage.ts` / `usageProfile.ts` / `goUsageSync.ts` in.
+2. **`src/transports/`** (from `streaming.ts` 1620 → split): one entry per transport (`chatCompletions` / `responses` / `anthropic` / `google`) + shared `engine` (HTTP/SSE + retry/backoff), `sse` (pure parser), `extractors` (Base/OpenAi/Anthropic), `extract` (non-stream + pure helpers), `streamParts`, `thinkTags` (pure). Contract types → `src/core/transport.ts`.
+3. **`src/models/` + `src/core/`**: moved `metadata`/`modelLimits`/`modelCapabilities`/`modelNames` → `models/`, `routing.ts` → `core/routing.ts`, new `models/metadataFetcher.ts` (models.dev cache) + `models/pricing.ts`.
+4. **`src/provider/`** (from `extension.ts`): `OpenCodeProvider` class (moved whole, one cohesive concern), `definitions` (PROVIDERS + model types + user-agent/transient-fetch helpers), `messages`/`tokens` (convertMessage + token estimation), `settings` (schema/getSettings/limits/capabilities/rawModelId/visionProxyEnabled), `visionProxy`.
+5. **`src/commands/`**: `providers.ts`, `agentsWindow.ts`, `diagnostics.ts`, `thinkingPicker.ts` — command handlers moved out of `extension.ts`.
+6. **Thin entry**: `extension.ts` is ~414 lines (was 4653) — only `activate` wiring + `deactivate`. Both compat barrels (`streaming.ts`, `goUsageTracker.ts`) deleted; all importers reference canonical paths.
+
+**Verification:** `npm run compile` clean; `npm test` 291/291; `npm run test-retry` 7/7 (mock server); `npm run lint` fully green on Windows. CHANGELOG `[Unreleased]` updated.
+
+**Notes:** env quirks hit during the run — user's global gitignore ignores `.vscode`, so lint-staged fails whenever `.vscode/settings.json` is staged (commit with targeted `git add`, never `git add -A`); PowerShell `WriteAllLines` writes CRLF, so always `prettier --write` after PowerShell line-range edits.
 
 ---
 
