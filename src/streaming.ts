@@ -51,6 +51,16 @@ export interface StreamRequestOptions {
   capacityLimitedModelNotes?: Record<string, string>;
   onTransportSummary?: (summary: TransportRequestSummary) => void;
   /**
+   * Whether `reasoning_content` should be surfaced as visible text instead of
+   * a thinking part. Computed UPSTREAM by the thinking provider strategy from
+   * the resolved thinking config — never inferred from the body here.
+   *
+   * Currently false for every family: reasoning models emit genuine CoT in
+   * `reasoning_content`, so it always goes to the thinking panel. (The old
+   * gateway #37635 mislabel is the gateway's bug, not worked around here.)
+   */
+  treatReasoningAsContent?: boolean;
+  /**
    * Controls whether `<think>...</think>` tags inlined in the model's text
    * content are stripped and accumulated as reasoning content.
    *
@@ -89,20 +99,14 @@ export interface TransportRequestSummary {
 
 export async function streamChatCompletions(options: StreamRequestOptions): Promise<void> {
   const thinkFilter = createThinkTagFilter(options.stripThinkTags, options.modelId);
-  // Workaround for opencode-go gateway bug (#37635): the Go gateway wraps ALL
-  // streaming responses in `reasoning_content`. Only apply when:
-  // 1. Request goes to the Go gateway URL (/zen/go/)
-  // 2. `reasoning_effort` is NOT in the body (model thinking is OFF)
-  // When thinking IS on (reasoning_effort present), reasoning_content is genuine
-  // CoT and should remain in the thinking panel.
+  // Display decision: whether `reasoning_content` should be surfaced as visible
+  // text instead of a thinking part. Computed UPSTREAM by the thinking provider
+  // strategy from the resolved thinking config — not inferred from the body
+  // here. Currently false for all providers: reasoning_content is genuine CoT.
   const isGoGateway = options.url.includes("/zen/go/");
   const body = options.body as Record<string, unknown> | undefined;
-  // "Thinking is ON" whenever the body asks for reasoning through any channel
-  // (reasoning_effort, budget_tokens, enable_thinking, thinking block — Kimi
-  // K2.7 and MiniMax M3 route through chat-completions with Anthropic-style
-  // shapes), see bodyRequestsThinking().
   const hasReasoningEffort = isGoGateway && bodyRequestsThinking(body);
-  const treatReasoningAsContent = isGoGateway && !hasReasoningEffort;
+  const treatReasoningAsContent = options.treatReasoningAsContent ?? false;
   if (isGoGateway) {
     options.output?.appendLine(
       `[go-gw] model=${options.modelId} hasReasoningEffort=${String(hasReasoningEffort)} treatReasoningAsContent=${String(treatReasoningAsContent)}`,
@@ -126,8 +130,9 @@ export async function streamChatCompletions(options: StreamRequestOptions): Prom
 
   extractor.flushRemainingToolCalls(options.progress, options.requestHeaders["x-opencode-request"]);
   extractor.flushReasoningFallback(options.progress, options.requestHeaders["x-opencode-request"]);
-  // Thinking-off responses surfaced the reasoning as visible text (gateway
-  // bug #37635); attach the marker so the next turn echoes reasoning_content.
+  // Dormant marker path: no provider treats reasoning as visible text anymore
+  // (old gateway #37635 mislabel is not worked around), so flushReasoningMarker
+  // is a no-op today — kept as the designed seam.
   const reasoningMarker = extractor.flushReasoningMarker();
   if (reasoningMarker) {
     options.progress.report(reasoningMarker);
@@ -980,18 +985,13 @@ class OpenAiResponseExtractor extends BaseResponseExtractor {
     localRequestId?: string,
     output?: vscode.OutputChannel,
     /**
-     * Workaround for opencode-go gateway bug (#37635).
+     * Display seam: whether `reasoning_content` should be emitted as a visible
+     * `LanguageModelTextPart` instead of a thinking part.
      *
-     * The Go gateway wraps ALL model streaming responses in `reasoning_content`
-     * instead of `content`. When this flag is `true` AND a delta has
-     * `reasoning_content` but no `content`, the reasoning is emitted as
-     * visible `LanguageModelTextPart` instead of as a thinking part.
-     *
-     * CONTRACT:
-     * - Only set for Go-gateway requests where `reasoning_effort` is NOT in the
-     *   payload (i.e. MiMo thinking is OFF). When thinking IS on, the model
-     *   genuinely uses reasoning_content for CoT → goes to thinking panel.
-     * - Zen gateway and all non-Go models are never affected.
+     * Computed upstream by the thinking provider strategy. Currently always
+     * false — reasoning models emit genuine CoT in `reasoning_content`, so it
+     * goes to the thinking panel. (The old gateway #37635 mislabel is not
+     * worked around.)
      */
     private readonly treatReasoningAsContent = false,
   ) {
@@ -1107,10 +1107,10 @@ class OpenAiResponseExtractor extends BaseResponseExtractor {
       }
       const reasoning = extractReasoningFromDelta(delta);
       if (reasoning) {
-        // Workaround for opencode-go gateway bug (#37635):
-        // When treatReasoningAsContent is true AND delta.content is empty,
-        // the model's response was placed in reasoning_content by the gateway.
-        // Emit as visible text. Suffix-repetition loop guard still applies.
+        // Dormant display seam: were treatReasoningAsContent true AND
+        // delta.content empty, reasoning_content would be emitted as visible
+        // text (old gateway #37635 mislabel). Never set today — reasoning is
+        // genuine CoT and goes to the thinking panel. Loop guard still applies.
         if (this.treatReasoningAsContent && !visible && text.length === 0) {
           if (!this.shouldSuppressThinkingEmit(reasoning)) {
             this.emittedTextLength += reasoning.length;

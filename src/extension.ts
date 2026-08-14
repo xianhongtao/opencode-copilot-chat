@@ -19,14 +19,7 @@ import {
   type ResolvedModelMetadata,
 } from "./metadata";
 import { resolveModelRouting } from "./routing";
-import {
-  buildFamilyThinkingSchema,
-  buildQwenAnthropicThinkingPayload,
-  buildThinkingPayload,
-  applyRequestThinkingOverride,
-  thinkingFamily,
-  type ThinkingSettings,
-} from "./thinking";
+import { extractThinkingOverride, resolveThinkingConfig, thinkingFamily, thinkingProviderFor, type ThinkingSettings } from "./thinking";
 import { shouldEchoThinkingHistory, thinkingTextFromValue } from "./reasoningHistory";
 import { buildOpenCodeGatewayAuthHeaders } from "./openCodeAuth";
 import {
@@ -54,7 +47,14 @@ import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } 
 import { providerModelDisplayName } from "./modelNames";
 import { buildStableModelCapabilities } from "./modelCapabilities";
 import { calculateModelLimits, type ModelLimits } from "./modelLimits";
-import { buildResponsesRequestEnvelope, joinedTextContent, responsesInputItemsFromMessage } from "./responsesRequest";
+import {
+  buildAnthropicMessagesRequestBody,
+  buildChatCompletionsRequestBody,
+  buildGoogleGenerateContentBody,
+  buildResponsesRequestBody,
+  messagesHaveImages,
+} from "./request/builders";
+import type { ApiMessage, ApiSettings, OpenAiContentPart, OpenAiToolCall } from "./request/types";
 import { runtimeDiagnosticsLines } from "./runtimeDiagnostics";
 import { estimatePromptTokenCount, estimateTokenCount } from "./tokenEstimate";
 import {
@@ -143,7 +143,6 @@ import {
   sleep,
   toFiniteNumber,
 } from "./utils";
-import { parseToolInput as parseToolInputShared } from "./toolCallAccumulator";
 import { isFreeModel } from "./metadata";
 
 import { formatCacheHitRatio, formatUsageStatusBarText, formatUsageStatusBarTooltip, type UsageSnapshot } from "./usage";
@@ -580,8 +579,6 @@ const PROVIDERS: Record<ProviderDefinition["vendor"], ProviderDefinition> = (() 
   };
 })();
 
-type ApiRole = "user" | "assistant" | "tool";
-
 interface OpenCodeModel extends vscode.LanguageModelChatInformation {
   endpointKind: ModelEndpointKind;
   provider: ProviderDefinition;
@@ -617,31 +614,6 @@ interface ModelListResponse {
   data?: ModelListEntry[];
 }
 
-interface ApiMessage {
-  role: ApiRole;
-  content: string | null | OpenAiContentPart[];
-  reasoning_content?: string;
-  tool_call_id?: string;
-  tool_calls?: OpenAiToolCall[];
-}
-
-interface OpenAiContentPart {
-  type: "text" | "image_url";
-  text?: string;
-  image_url?: {
-    url: string;
-  };
-}
-
-interface OpenAiToolCall {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
 interface ConvertedMessageResult {
   messages: ApiMessage[];
   normalizedImageCount: number;
@@ -658,17 +630,6 @@ interface ConvertedMessageResult {
  * chat-completions): the default is WIDELY_SUPPORTED_EFFORTS = ["low", "medium", "high"].
  * DeepSeek V4 on openai-compatible additionally adds "max" → ["low", "medium", "high", "max"].
  */
-interface ApiSettings {
-  temperature: number;
-  maxOutputTokensOverride: number;
-  maxInputTokensOverride: number;
-  debugReasoning: boolean;
-  requestTimeoutMs: number;
-  streamIdleTimeoutMs: number;
-  thinking: ThinkingSettings;
-  stripThinkTags: "never" | "auto" | "always";
-}
-
 interface LanguageModelConfiguration {
   apiKey?: unknown;
 }
@@ -721,76 +682,6 @@ type ConfiguredLanguageModelResponseOptions = vscode.ProvideLanguageModelChatRes
 
 let modelMetadataSnapshot: CachedModelMetadataSnapshot | undefined;
 let modelMetadataRefreshPromise: Promise<CachedModelMetadataSnapshot> | undefined;
-
-interface OpenAiToolDefinition {
-  type: "function";
-  function: {
-    name: string;
-    description: string;
-    parameters: object;
-  };
-}
-
-interface AnthropicToolDefinition {
-  name: string;
-  description: string;
-  input_schema: object;
-}
-
-interface AnthropicCacheControl {
-  type: "ephemeral";
-}
-
-interface AnthropicTextBlock {
-  type: "text";
-  text: string;
-  cache_control?: AnthropicCacheControl;
-}
-
-interface AnthropicImageSourceUrl {
-  type: "url";
-  url: string;
-}
-
-interface AnthropicImageSourceBase64 {
-  type: "base64";
-  media_type: string;
-  data: string;
-}
-
-type AnthropicImageSource = AnthropicImageSourceUrl | AnthropicImageSourceBase64;
-
-interface AnthropicImageBlock {
-  type: "image";
-  source: AnthropicImageSource;
-  cache_control?: AnthropicCacheControl;
-}
-
-interface AnthropicToolUseBlock {
-  type: "tool_use";
-  id: string;
-  name: string;
-  input: unknown;
-  cache_control?: AnthropicCacheControl;
-}
-
-interface AnthropicToolResultBlock {
-  type: "tool_result";
-  tool_use_id: string;
-  // Anthropic tool_result.content may be either a plain string or a list of
-  // content blocks (text + image) per the Messages API spec. We support the
-  // array form so MCP tool results that include images (e.g. screenshots) are
-  // forwarded to vision-capable Anthropic models instead of being dropped.
-  content: string | AnthropicContentBlock[];
-  cache_control?: AnthropicCacheControl;
-}
-
-type AnthropicContentBlock = AnthropicTextBlock | AnthropicImageBlock | AnthropicToolUseBlock | AnthropicToolResultBlock;
-
-interface AnthropicRequestMessage {
-  role: "user" | "assistant";
-  content: AnthropicContentBlock[];
-}
 
 interface RecentTransportSummary extends TransportRequestSummary {
   recordedAt: string;
@@ -2916,16 +2807,17 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       const metadata = this.resolveModelMetadata(modelId, metadataSnapshot);
       const routing = resolveModelRouting(modelId, this.definition);
       const effectiveModelId = toEffectiveModelId(modelId, this.definition.vendor);
-      // Add the key fingerprint to the model ID so two Manage Language
-      // Models entries with the same vendor produce distinct model IDs,
-      // preventing the apiKeysByModelId map from overwriting keys
-      // (fixes issue #63).
-      const fp = keyFingerprint(apiKey);
-      const fpEffectiveModelId = `${effectiveModelId}::${fp}`;
-      const agentHostModelId = `${fpEffectiveModelId}::agent-host`;
+      // Stable model ID — deliberately NO key fingerprint. VS Code's per-model
+      // configuration (chatLanguageModels.json) is keyed by this ID; keeping it
+      // stable is what makes per-model thinking settings survive restarts and
+      // key-source changes (the old `::<fp>` suffix made them go stale and
+      // reset — see issue #131). Multi-key resolution relies on the BYOK
+      // group's configuration.apiKey; apiKeysByModelId is only a fallback for
+      // the SecretStorage path.
+      const agentHostModelId = `${effectiveModelId}::agent-host`;
       const limits = modelLimits(metadata, settings);
       this.apiKeysByModelId.set(modelId, apiKey);
-      this.apiKeysByModelId.set(fpEffectiveModelId, apiKey);
+      this.apiKeysByModelId.set(effectiveModelId, apiKey);
       this.apiKeysByModelId.set(agentHostModelId, apiKey);
 
       const capacityNote = CAPACITY_LIMITED_MODEL_NOTES[modelId];
@@ -2976,7 +2868,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       }
 
       // General variant — no targetChatSessionType → visible in Chat view
-      const info: OpenCodeModel = { ...sharedFields, id: fpEffectiveModelId };
+      const info: OpenCodeModel = { ...sharedFields, id: effectiveModelId };
 
       registeredCount += 1;
       if (!firstModelId) firstModelId = info.id;
@@ -3044,13 +2936,21 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     }
 
     const baseSettings = getSettings();
-    // Apply per-request Thinking selection (from Copilot Chat submenu) on top
-    // of the workspace default. The override only affects the current model
-    // family; other families remain at their global defaults.
     const requestOverride = getRequestModelConfiguration(options);
+    // Resolve the effective thinking config: VS Code's per-model configuration
+    // (options.modelConfiguration, chatLanguageModels.json) is the SINGLE
+    // authority for per-model thinking; the workspace setting is the default;
+    // THINKING_DEFAULTS is the final fallback. No extension-side persisted
+    // shadow state (removed — it fought the VS Code authority and could pin a
+    // stale non-off value over the user's Off).
+    const resolvedThinking = resolveThinkingConfig({
+      modelId: rawModelId,
+      workspace: baseSettings.thinking,
+      modelConfiguration: requestOverride,
+    });
     const settings: ApiSettings = {
       ...baseSettings,
-      thinking: applyRequestThinkingOverride(rawModelId, baseSettings.thinking, requestOverride),
+      thinking: resolvedThinking.settings,
     };
     // Extract the context-size tier selected by the user (if any)
     const contextSizeOverride = typeof requestOverride?.contextSize === "number" ? requestOverride.contextSize : undefined;
@@ -3161,7 +3061,10 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const promptTokens = estimatePromptTokenCount(apiMessages, options.tools);
     const limits = modelLimits(metadata, settings, contextSizeOverride, promptTokens);
 
-    const thinkingPayload = buildThinkingPayload(rawModelId, settings.thinking, hasImageInput && metadata.supportsVision);
+    const thinkingPayload = thinkingProviderFor(rawModelId).buildPayload(settings.thinking, {
+      hasImageInput: hasImageInput && metadata.supportsVision,
+      endpoint: routing.endpointKind === "messages" ? "messages" : routing.endpointKind === "responses" ? "responses" : "chat",
+    });
     const requestHeaders = buildOpenCodeRequestHeaders(messages, options, rawModelId);
     const outputChannel = this.getOutputChannel();
     const onTransportSummary = (summary: TransportRequestSummary) => {
@@ -3194,7 +3097,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     };
 
     this.log(
-      `Request: initiator=${options.requestInitiator} model=${model.id} rawModel=${rawModelId} endpoint=${routing.endpointKind} metadataSource=${metadata.source} messages=${String(apiMessages.length)} promptEstimate=${String(promptTokens)} maxOutputTokens=${String(limits.maxOutputTokens)} session=${requestHeaders["x-opencode-session"]} request=${requestHeaders["x-opencode-request"]} modelConfiguration=${JSON.stringify(pickThinkingModelConfiguration(requestOverride))} thinking=${JSON.stringify(settings.thinking)} thinkingPayload=${JSON.stringify(thinkingPayload)}`,
+      `Request: initiator=${options.requestInitiator} model=${model.id} rawModel=${rawModelId} endpoint=${routing.endpointKind} metadataSource=${metadata.source} messages=${String(apiMessages.length)} promptEstimate=${String(promptTokens)} maxOutputTokens=${String(limits.maxOutputTokens)} session=${requestHeaders["x-opencode-session"]} request=${requestHeaders["x-opencode-request"]} modelConfiguration=${JSON.stringify(extractThinkingOverride(requestOverride))} thinkingSource=${resolvedThinking.source} thinking=${JSON.stringify(settings.thinking)} thinkingPayload=${JSON.stringify(thinkingPayload)}`,
     );
     if (settings.debugReasoning) {
       this.log("Reasoning debug is enabled. Provider reasoning_content will be written to this output channel when available.");
@@ -3297,6 +3200,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
         capacityLimitedModelNotes: CAPACITY_LIMITED_MODEL_NOTES,
         onTransportSummary,
         stripThinkTags: settings.stripThinkTags,
+        treatReasoningAsContent: thinkingProviderFor(rawModelId).treatReasoningAsContent(routing.endpointUrl, settings.thinking),
         onReasoningContent: (toolCallIds, reasoningContent) => {
           this.storeReasoningContent(toolCallIds, reasoningContent);
         },
@@ -3594,421 +3498,9 @@ async function refreshOpenCodeModelMetadata(
   return modelMetadataRefreshPromise;
 }
 
-function buildChatCompletionsRequestBody(
-  modelId: string,
-  messages: ApiMessage[],
-  options: vscode.ProvideLanguageModelChatResponseOptions,
-  settings: ApiSettings,
-  metadata: ResolvedModelMetadata,
-  limits: ModelLimits,
-): Record<string, unknown> {
-  const tools = mapOpenAiTools(options.tools);
-  const thinkingPayload = buildThinkingPayload(modelId, settings.thinking, messagesHaveImages(messages));
+// (chat/Anthropic/Responses/Google request builders migrated to src/request/builders.ts)
 
-  return {
-    model: modelId,
-    messages,
-    // Only send temperature if the model supports it (not deprecated)
-    ...(metadata.temperature !== false ? { temperature: settings.temperature } : {}),
-    max_tokens: limits.maxOutputTokens,
-    stream: true,
-    stream_options: { include_usage: true },
-    ...thinkingPayload,
-    ...(tools.length ? { tools, tool_choice: toolChoice(options.toolMode) } : {}),
-  };
-}
-
-function buildAnthropicMessagesRequestBody(
-  modelId: string,
-  messages: ApiMessage[],
-  options: vscode.ProvideLanguageModelChatResponseOptions,
-  settings: ApiSettings,
-  metadata: ResolvedModelMetadata,
-  limits: ModelLimits,
-): Record<string, unknown> {
-  const tools = mapAnthropicTools(options.tools);
-  const rawThinkingPayload = buildThinkingPayload(modelId, settings.thinking, messagesHaveImages(messages));
-  // Qwen models routed to the Anthropic messages endpoint need thinking in
-  // Anthropic-native format ({ type: "enabled"|"disabled" }) rather than the
-  // Qwen-native enable_thinking boolean. If the payload contains
-  // enable_thinking, translate it; otherwise pass through as-is.
-  const thinkingPayload =
-    /^qwen3(?:\.|-)/i.test(modelId) && ("enable_thinking" in rawThinkingPayload || "thinking_budget" in rawThinkingPayload)
-      ? buildQwenAnthropicThinkingPayload(settings.thinking)
-      : rawThinkingPayload;
-  const anthropicMessages = buildAnthropicMessages(messages);
-
-  return {
-    model: modelId,
-    // Only send temperature if the model supports it (not deprecated)
-    ...(metadata.temperature !== false ? { temperature: settings.temperature } : {}),
-    max_tokens: limits.maxOutputTokens,
-    stream: true,
-    messages: anthropicMessages,
-    ...thinkingPayload,
-    ...(tools.length ? { tools, tool_choice: anthropicToolChoice(options.toolMode) } : {}),
-  };
-}
-
-function buildAnthropicMessages(messages: ApiMessage[]): AnthropicRequestMessage[] {
-  let cacheControlCount = 0;
-  const nextCacheControl = (): { cache_control?: AnthropicCacheControl } => {
-    cacheControlCount += 1;
-    return cacheControlCount <= 4 ? { cache_control: { type: "ephemeral" } } : {};
-  };
-
-  const anthropicMessages: AnthropicRequestMessage[] = [];
-
-  for (const message of messages) {
-    if (message.role === "user") {
-      const userBlocks = anthropicUserBlocks(message.content, nextCacheControl);
-      if (userBlocks.length) {
-        anthropicMessages.push({ role: "user", content: userBlocks });
-      }
-      continue;
-    }
-
-    if (message.role === "assistant") {
-      const assistantBlocks = anthropicAssistantBlocks(message, nextCacheControl);
-      if (assistantBlocks.length) {
-        anthropicMessages.push({ role: "assistant", content: assistantBlocks });
-      }
-      continue;
-    }
-
-    // After the user/assistant continues above, role is narrowed to "tool".
-    if (message.tool_call_id) {
-      anthropicMessages.push({
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: message.tool_call_id,
-            content: anthropicToolResultContent(message.content, nextCacheControl),
-            ...nextCacheControl(),
-          },
-        ],
-      });
-    }
-  }
-
-  if (!anthropicMessages.length) {
-    anthropicMessages.push({
-      role: "user",
-      content: [{ type: "text", text: "Continue the conversation.", ...nextCacheControl() }],
-    });
-  }
-
-  return anthropicMessages;
-}
-
-function anthropicUserBlocks(
-  content: ApiMessage["content"],
-  nextCacheControl: () => { cache_control?: AnthropicCacheControl },
-): AnthropicContentBlock[] {
-  if (typeof content === "string") {
-    return content.trim() ? [{ type: "text", text: content, ...nextCacheControl() }] : [];
-  }
-
-  if (!Array.isArray(content)) {
-    return [];
-  }
-
-  const blocks: AnthropicContentBlock[] = [];
-  for (const part of content) {
-    if (part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
-      blocks.push({ type: "text", text: part.text, ...nextCacheControl() });
-      continue;
-    }
-
-    if (part.type === "image_url") {
-      const source = anthropicImageSource(part);
-      if (source) {
-        blocks.push({ type: "image", source, ...nextCacheControl() });
-      }
-    }
-  }
-
-  return blocks;
-}
-
-// RULES: Anthropic tool_result.content accepts either a plain string or a
-// list of content blocks. We use the string form when the message has no
-// images (the common case, smaller payload), and fall back to the array form
-// (text + image blocks) only when an image_url part is present. This keeps
-// text-only tool results byte-for-byte identical to the previous behavior
-// while enabling vision-capable Anthropic models to consume MCP screenshots.
-function anthropicToolResultContent(
-  content: ApiMessage["content"],
-  nextCacheControl: () => { cache_control?: AnthropicCacheControl },
-): string | AnthropicContentBlock[] {
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  const hasImage = content.some((part) => part.type === "image_url" && part.image_url?.url);
-  if (!hasImage) {
-    return joinedTextContent(content, "\n");
-  }
-
-  return anthropicUserBlocks(content, nextCacheControl);
-}
-
-function anthropicAssistantBlocks(
-  message: ApiMessage,
-  nextCacheControl: () => { cache_control?: AnthropicCacheControl },
-): AnthropicContentBlock[] {
-  const blocks: AnthropicContentBlock[] = [];
-
-  const text = joinedTextContent(message.content);
-  if (text) {
-    blocks.push({ type: "text", text, ...nextCacheControl() });
-  }
-
-  for (const toolCall of message.tool_calls ?? []) {
-    blocks.push({
-      type: "tool_use",
-      id: toolCall.id || `toolu_${Math.random().toString(36).slice(2)}`,
-      name: toolCall.function.name,
-      input: anthropicToolCallInput(toolCall.function.arguments),
-      ...nextCacheControl(),
-    });
-  }
-
-  return blocks;
-}
-
-function anthropicToolCallInput(argumentsText: string): unknown {
-  if (!argumentsText.trim()) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(argumentsText);
-  } catch {
-    return argumentsText;
-  }
-}
-
-function anthropicImageSource(part: OpenAiContentPart): AnthropicImageSource | undefined {
-  if (part.type !== "image_url") {
-    return undefined;
-  }
-
-  const url = part.image_url?.url;
-  if (typeof url !== "string" || !url) {
-    return undefined;
-  }
-
-  const match = /^data:([^;]+);base64,(.*)$/i.exec(url);
-  if (match) {
-    return {
-      type: "base64",
-      media_type: match[1],
-      data: match[2],
-    };
-  }
-
-  return { type: "url", url };
-}
-
-function mapResponsesTools(tools: readonly vscode.LanguageModelChatTool[] | undefined): Record<string, unknown>[] {
-  return (tools ?? []).map((tool) => ({
-    type: "function",
-    name: tool.name,
-    description: tool.description,
-    parameters: sanitizeToolSchema(tool.inputSchema),
-  }));
-}
-
-function buildResponsesRequestBody(
-  modelId: string,
-  messages: ApiMessage[],
-  options: vscode.ProvideLanguageModelChatResponseOptions,
-  settings: ApiSettings,
-  metadata: ResolvedModelMetadata,
-  limits: ModelLimits,
-): Record<string, unknown> {
-  const input = messages.flatMap((message) => responsesInputItemsFromMessage(message));
-  const tools = mapResponsesTools(options.tools);
-  const thinkingPayload = buildThinkingPayload(modelId, settings.thinking, messagesHaveImages(messages));
-
-  return buildResponsesRequestEnvelope({
-    model: modelId,
-    input,
-    maxOutputTokens: limits.maxOutputTokens,
-    // Some models reject any non-default temperature value.
-    ...(metadata.temperature === false ? {} : { temperature: settings.temperature }),
-    thinkingPayload,
-    tools,
-    toolChoice: toolChoice(options.toolMode),
-  });
-}
-
-function buildGoogleGenerateContentBody(
-  messages: ApiMessage[],
-  options: vscode.ProvideLanguageModelChatResponseOptions,
-  settings: ApiSettings,
-  limits: ModelLimits,
-): Record<string, unknown> {
-  const tools = mapGoogleTools(options.tools);
-
-  return {
-    contents: googleContentsFromMessages(messages),
-    generationConfig: {
-      maxOutputTokens: limits.maxOutputTokens,
-      temperature: settings.temperature,
-    },
-    ...(tools.length ? { tools: [{ functionDeclarations: tools }], toolConfig: googleToolConfig(options.toolMode) } : {}),
-  };
-}
-
-function mapGoogleTools(tools: readonly vscode.LanguageModelChatTool[] | undefined): Record<string, unknown>[] {
-  return (tools ?? []).map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: sanitizeToolSchema(tool.inputSchema),
-  }));
-}
-
-function googleToolConfig(mode: vscode.LanguageModelChatToolMode): Record<string, unknown> {
-  return {
-    functionCallingConfig: {
-      mode: mode === vscode.LanguageModelChatToolMode.Required ? "ANY" : "AUTO",
-    },
-  };
-}
-
-function googleContentsFromMessages(messages: ApiMessage[]): Record<string, unknown>[] {
-  const toolNamesById = new Map<string, string>();
-  const contents: Record<string, unknown>[] = [];
-
-  for (const message of messages) {
-    if (message.role === "user") {
-      const parts = googleUserParts(message.content);
-      if (parts.length) {
-        contents.push({ role: "user", parts });
-      }
-      continue;
-    }
-
-    if (message.role === "assistant") {
-      const parts: Record<string, unknown>[] = [];
-      if (typeof message.reasoning_content === "string" && message.reasoning_content.trim()) {
-        parts.push({ text: message.reasoning_content, thought: true });
-      }
-      const text = joinedTextContent(message.content);
-      if (text) {
-        parts.push({ text });
-      }
-      for (const toolCall of message.tool_calls ?? []) {
-        const args = parseToolInputShared(toolCall.function.arguments);
-        parts.push({ functionCall: { name: toolCall.function.name, args } });
-        toolNamesById.set(toolCall.id, toolCall.function.name);
-      }
-      if (parts.length) {
-        contents.push({ role: "model", parts });
-      }
-      continue;
-    }
-
-    // After the user/model continues above, role is narrowed to "tool".
-    if (message.tool_call_id) {
-      const name = toolNamesById.get(message.tool_call_id) ?? "tool";
-      const response = googleFunctionResponseContent(message.content, name);
-      contents.push({
-        role: "user",
-        parts: [
-          {
-            functionResponse: response,
-          },
-        ],
-      });
-    }
-  }
-
-  return contents;
-}
-
-function googleUserParts(content: ApiMessage["content"]): Record<string, unknown>[] {
-  if (typeof content === "string") {
-    return content ? [{ text: content }] : [];
-  }
-
-  if (!Array.isArray(content)) {
-    return [];
-  }
-
-  return content.flatMap((part): Record<string, unknown>[] => {
-    if (part.type === "text" && typeof part.text === "string") {
-      return [{ text: part.text }];
-    }
-
-    if (part.type === "image_url" && part.image_url?.url) {
-      const inlineData = dataUrlToInlineData(part.image_url.url);
-      return inlineData ? [{ inlineData }] : [];
-    }
-
-    return [];
-  });
-}
-
-function dataUrlToInlineData(url: string): { mimeType: string; data: string } | undefined {
-  const match = /^data:(.+?);base64,(.+)$/i.exec(url);
-  if (!match) {
-    return undefined;
-  }
-  return {
-    mimeType: match[1],
-    data: match[2],
-  };
-}
-
-// RULES: Gemini's functionResponse.response is a flexible object. The plain
-// form is `{ name, content }` where content is a JSON string (text-only tool
-// results). When the tool result carries an image (e.g. MCP screenshot), we
-// extend it with `parts` containing both the text and an inlineData block so
-// vision-capable Gemini models can see the image. The `content` field is kept
-// for backwards compatibility with providers that ignore the `parts` field.
-function googleFunctionResponseContent(
-  content: ApiMessage["content"],
-  name: string,
-): { name: string; content: string; parts?: Record<string, unknown>[] } {
-  if (typeof content === "string") {
-    return { name, content };
-  }
-
-  if (!Array.isArray(content)) {
-    // ApiMessage content is `string | null | OpenAiContentPart[]`; after the
-    // string and array checks above, this branch only sees null.
-    return { name, content: JSON.stringify("") };
-  }
-
-  const text = joinedTextContent(content, "\n");
-  const hasImage = content.some((part) => part.type === "image_url" && part.image_url?.url);
-  if (!hasImage) {
-    return { name, content: text };
-  }
-
-  const parts: Record<string, unknown>[] = [];
-  if (text) {
-    parts.push({ text });
-  }
-  for (const part of content) {
-    if (part.type === "image_url" && part.image_url?.url) {
-      const inlineData = dataUrlToInlineData(part.image_url.url);
-      if (inlineData) {
-        parts.push({ inlineData });
-      }
-    }
-  }
-
-  return { name, content: text, parts };
-}
+// (google request builders migrated to src/request/builders.ts)
 
 // The official OpenCode client sends these headers on every request. The Zen
 // gateway reads x-opencode-session first, then converts that sticky identifier
@@ -4115,115 +3607,7 @@ function stableHash(value: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-function mapOpenAiTools(tools: readonly vscode.LanguageModelChatTool[] | undefined): OpenAiToolDefinition[] {
-  return (tools ?? []).map((tool) => ({
-    type: "function",
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: sanitizeToolSchema(tool.inputSchema),
-    },
-  }));
-}
-
-function mapAnthropicTools(tools: readonly vscode.LanguageModelChatTool[] | undefined): AnthropicToolDefinition[] {
-  return (tools ?? []).map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    input_schema: sanitizeToolSchema(tool.inputSchema),
-  }));
-}
-
-function sanitizeToolSchema(schema: unknown): object {
-  const root = isRecord(schema) ? schema : { type: "object", properties: {} };
-  const sanitized = sanitizeJsonSchemaNode(root, root, new Set());
-  if (!isRecord(sanitized)) {
-    return { type: "object", properties: {} };
-  }
-
-  return {
-    type: "object",
-    properties: isRecord(sanitized.properties) ? sanitized.properties : {},
-    ...(Array.isArray(sanitized.required) ? { required: sanitized.required } : {}),
-  };
-}
-
-function sanitizeJsonSchemaNode(value: unknown, root: Record<string, unknown>, seenRefs: Set<string>): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizeJsonSchemaNode(item, root, seenRefs));
-  }
-
-  if (!isRecord(value)) {
-    return value;
-  }
-
-  const ref = typeof value.$ref === "string" ? value.$ref : undefined;
-  if (ref?.startsWith("#/") && !seenRefs.has(ref)) {
-    const target = resolveJsonPointer(root, ref);
-    if (target !== undefined) {
-      const nextSeenRefs = new Set(seenRefs);
-      nextSeenRefs.add(ref);
-      const siblings = Object.fromEntries(Object.entries(value).filter(([key]) => key !== "$ref"));
-      const resolved = sanitizeJsonSchemaNode(target, root, nextSeenRefs);
-      return isRecord(resolved)
-        ? sanitizeJsonSchemaNode({ ...resolved, ...siblings }, root, nextSeenRefs)
-        : sanitizeJsonSchemaNode(siblings, root, nextSeenRefs);
-    }
-  }
-
-  const result: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "$schema" || key === "$id" || key === "$ref" || key === "$defs" || key === "definitions") {
-      continue;
-    }
-
-    if (key === "properties" && isRecord(child)) {
-      result.properties = Object.fromEntries(
-        Object.entries(child).map(([propertyName, propertySchema]) => [
-          propertyName,
-          sanitizeJsonSchemaNode(propertySchema, root, seenRefs),
-        ]),
-      );
-      continue;
-    }
-
-    if (key === "items" || key === "additionalProperties") {
-      result[key] = sanitizeJsonSchemaNode(child, root, seenRefs);
-      continue;
-    }
-
-    if ((key === "anyOf" || key === "oneOf" || key === "allOf") && Array.isArray(child)) {
-      result[key] = child.map((item) => sanitizeJsonSchemaNode(item, root, seenRefs));
-      continue;
-    }
-
-    if (["type", "description", "enum", "required", "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"].includes(key)) {
-      result[key] = child;
-    }
-  }
-
-  return result;
-}
-
-function resolveJsonPointer(root: Record<string, unknown>, pointer: string): unknown {
-  return pointer
-    .slice(2)
-    .split("/")
-    .reduce<unknown>((current, segment) => {
-      if (!isRecord(current)) {
-        return undefined;
-      }
-      return current[segment.replace(/~1/g, "/").replace(/~0/g, "~")];
-    }, root);
-}
-
-function toolChoice(mode: vscode.LanguageModelChatToolMode): "auto" | "required" {
-  return mode === vscode.LanguageModelChatToolMode.Required ? "required" : "auto";
-}
-
-function anthropicToolChoice(mode: vscode.LanguageModelChatToolMode): { type: "auto" | "any" } {
-  return { type: mode === vscode.LanguageModelChatToolMode.Required ? "any" : "auto" };
-}
+// (tool mapping + JSON-schema sanitize migrated to src/request/builders.ts)
 
 async function convertMessage(
   message: vscode.LanguageModelChatRequestMessage,
@@ -4626,9 +4010,7 @@ function normalizeMessages(messages: ApiMessage[]): ApiMessage[] {
   return normalized.length ? normalized : [{ role: "user", content: "" }];
 }
 
-function messagesHaveImages(messages: readonly ApiMessage[]): boolean {
-  return messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "image_url"));
-}
+// messagesHaveImages migrated to src/request/builders.ts
 
 /**
  * Replace image content parts in older messages with a placeholder text note
@@ -4741,10 +4123,9 @@ function modelConfigurationSchema(modelId: string, metadata?: ResolvedModelMetad
   const properties: Record<string, unknown> = {};
 
   // --- Thinking / Reasoning Effort ---
-  // Priority 1: if models.dev provides explicit reasoning_options, use those.
-  // Priority 2: fall back to family-based hardcoded values.
-  // Priority 3: dynamic fallback for any model with reasoning: true.
-  const builtinSchema = buildFamilyThinkingSchema(modelId, metadata);
+  // Delegated to the per-provider strategy (schemaFromReasoningOptions first,
+  // then family hardcoded, then generic reasoning fallback).
+  const builtinSchema = thinkingProviderFor(modelId, metadata).schema(metadata);
 
   if (builtinSchema) {
     Object.assign(properties, builtinSchema.properties);
@@ -4773,12 +4154,8 @@ function modelConfigurationSchema(modelId: string, metadata?: ResolvedModelMetad
 
 /**
  * Build the thinking-effort portion of the configuration schema.
- * Delegated to `./thinking.ts` (pure, testable).
+ * Delegated to the per-provider strategy in `./thinking` (pure, testable).
  */
-
-// All thinking helpers (buildFamilyThinkingSchema, applyRequestThinkingOverride,
-// buildThinkingPayload, buildQwenAnthropicThinkingPayload, thinkingFamily) are
-// imported from ./thinking.ts at the top of this file.
 
 function getRequestModelConfiguration(options: vscode.ProvideLanguageModelChatResponseOptions): Record<string, unknown> | undefined {
   // The field is `modelConfiguration` in the current proposed API; older
@@ -4790,18 +4167,6 @@ function getRequestModelConfiguration(options: vscode.ProvideLanguageModelChatRe
     configuration?: Record<string, unknown>;
   };
   return opts.modelConfiguration ?? opts.configuration;
-}
-
-function pickThinkingModelConfiguration(override: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (!override) return undefined;
-  const picked: Record<string, unknown> = {};
-  for (const key of ["reasoningEffort", "thinkingMode", "thinkingBudget"]) {
-    const value = override[key];
-    if (typeof value === "string") {
-      picked[key] = value;
-    }
-  }
-  return Object.keys(picked).length ? picked : undefined;
 }
 
 function getSettings(): ApiSettings {
@@ -4837,8 +4202,8 @@ function getSettings(): ApiSettings {
   };
 }
 
-// buildThinkingPayload and buildQwenAnthropicThinkingPayload are imported from
-// ./thinking.ts (pure, testable).
+// The thinking provider strategies (thinkingProviderFor, resolveThinkingConfig)
+// are imported from ./thinking (pure, testable).
 
 function modelLimits(
   metadata: ResolvedModelMetadata,
