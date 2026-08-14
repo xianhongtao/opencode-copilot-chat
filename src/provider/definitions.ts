@@ -1,8 +1,11 @@
 import * as vscode from "vscode";
 import { CONFIG_SECTION, FALLBACK_USER_AGENT, FREE_ZEN_MODEL_IDS, SETTING_FREE_ONLY } from "../config";
+import type { ModelEndpointKind } from "../core/registry";
 import type { ApiMessage } from "../request/types";
 import { AGENT_GO_VENDOR, AGENT_ZEN_VENDOR, GO_VENDOR, ZEN_VENDOR, type AllProviderVendor } from "../providerTypes";
 import { getErrorMessage } from "../utils";
+
+export type { ModelEndpointKind } from "../core/registry";
 
 export interface ProviderDefinition {
   vendor: AllProviderVendor;
@@ -20,8 +23,6 @@ export interface ProviderDefinition {
   /** The vendor key for the main (non-agent) provider definition this variant mirrors. */
   baseVendor?: typeof GO_VENDOR | typeof ZEN_VENDOR;
 }
-
-export type ModelEndpointKind = "chat-completions" | "messages" | "responses" | "google";
 
 let cachedUserAgent: string | undefined;
 

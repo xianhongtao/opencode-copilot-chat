@@ -5,9 +5,14 @@
  * selected by {@link thinkingProviderFor}. This module owns the interface and
  * the single routing point from a raw model id to its strategy.
  *
+ * The family→strategy mapping itself is DATA-DRIVEN: which family a model
+ * belongs to comes from `core/registry.ts` (the shared model registry also
+ * used by the transport router), so a family's wiring lives in one table.
+ *
  * CONTRACT: pure only — no `vscode` import, no side effects.
  */
 import type { ResolvedModelMetadata } from "../models/metadata";
+import { lookupModelRegistryEntry } from "../core/registry";
 import type { ThinkingSettings, ThinkingFamily, BuildThinkingPayloadOptions } from "./types";
 import { DeepSeekThinking } from "./deepseek";
 import { GlmThinking } from "./glm";
@@ -42,16 +47,12 @@ export interface ThinkingProvider {
  * Detect which Thinking family a raw model id belongs to. Used both to render
  * the per-model picker submenu (configurationSchema) and to map the user's
  * per-request selection back to the right OpenCode request field.
+ *
+ * Reads the family from the shared model registry (`core/registry.ts`),
+ * ignoring vendor restrictions — the thinking strategy is transport-agnostic.
  */
 export function thinkingFamily(modelId: string): ThinkingFamily {
-  if (/^deepseek-/i.test(modelId)) return "deepseek";
-  if (/^glm-/i.test(modelId)) return "glm";
-  if (/^kimi-/i.test(modelId)) return "kimi";
-  if (/^minimax-/i.test(modelId)) return "minimax";
-  if (/^gpt-/i.test(modelId)) return "openai";
-  if (/^qwen3(?:\.|-)/i.test(modelId)) return "qwen";
-  if (/^mimo-/i.test(modelId)) return "mimo";
-  return null;
+  return lookupModelRegistryEntry(modelId).thinkingFamily;
 }
 
 /** Resolve the thinking strategy for a raw model id. */

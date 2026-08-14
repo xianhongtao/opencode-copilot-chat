@@ -1,51 +1,47 @@
-import { GO_VENDOR, ZEN_VENDOR, resolveBaseVendor, type ProviderRoutingDefinition } from "../providerTypes";
+import { resolveBaseVendor, type ProviderRoutingDefinition } from "../providerTypes";
+import { lookupModelRegistryEntry, type ModelEndpointKind } from "./registry";
 
-function isMessagesQwenModel(modelId: string): boolean {
-  return /^qwen3\.(?:5|6)-plus(?:-free)?$/i.test(modelId) || /^qwen3\.7-max$/i.test(modelId);
-}
-
+/**
+ * Resolve the transport for a raw model id from the data-driven registry
+ * (`core/registry.ts`). Adding a model family = adding a row to the registry,
+ * not editing this switch.
+ *
+ * Agent-host variants are resolved to their base vendor first (they mirror
+ * the vendor they serve).
+ */
 export function resolveModelRouting(
   modelId: string,
   provider: ProviderRoutingDefinition,
 ): {
-  endpointKind: "chat-completions" | "messages" | "responses" | "google";
+  endpointKind: ModelEndpointKind;
   endpointUrl: string;
   sdkPackage?: string;
 } {
   // Resolve agent-host variants to their base vendor for routing decisions.
   const baseVendor = resolveBaseVendor(provider.vendor);
+  const entry = lookupModelRegistryEntry(modelId, baseVendor);
 
-  // GPT models use the Responses API (not chat-completions).
-  // OpenCode Go docs require gpt-5.6-luna on /v1/responses.
-  // OpenAI reasoning models (GPT-5.x) only support reasoning via Responses API.
-  if (/^gpt-/i.test(modelId)) {
-    return {
-      endpointKind: "responses",
-      endpointUrl: provider.responsesUrl ?? provider.chatCompletionsUrl,
-      sdkPackage: "@ai-sdk/openai",
-    };
-  }
-
-  if (/^claude-/i.test(modelId) || (baseVendor === GO_VENDOR && /^minimax-m2\./i.test(modelId)) || isMessagesQwenModel(modelId)) {
-    return {
-      endpointKind: "messages",
-      endpointUrl: provider.messagesUrl,
-      sdkPackage: "@ai-sdk/anthropic",
-    };
-  }
-
-  if (baseVendor === ZEN_VENDOR && /^gemini-/i.test(modelId)) {
-    return {
-      endpointKind: "google",
-      endpointUrl: `${provider.modelsUrl}/${modelId}`,
-      sdkPackage: "@ai-sdk/google",
-    };
+  let endpointUrl: string;
+  switch (entry.endpointKind) {
+    case "responses":
+      // GPT models use the Responses API (not chat-completions). OpenCode Go
+      // docs require gpt-5.6-luna on /v1/responses.
+      endpointUrl = provider.responsesUrl ?? provider.chatCompletionsUrl;
+      break;
+    case "messages":
+      endpointUrl = provider.messagesUrl;
+      break;
+    case "google":
+      endpointUrl = `${provider.modelsUrl}/${modelId}`;
+      break;
+    default:
+      endpointUrl = provider.chatCompletionsUrl;
   }
 
   return {
-    endpointKind: "chat-completions",
-    endpointUrl: provider.chatCompletionsUrl,
-    sdkPackage: "@ai-sdk/openai-compatible",
+    endpointKind: entry.endpointKind,
+    endpointUrl,
+    ...(entry.sdkPackage ? { sdkPackage: entry.sdkPackage } : {}),
   };
 }
 
