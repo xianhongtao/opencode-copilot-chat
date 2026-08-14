@@ -172,23 +172,33 @@ export function normalizeCwd(value: string): string {
   return normalized;
 }
 
+/** Whether `value` starts with `prefix` followed by a path separator. */
+function startsWithPathSegment(value: string, prefix: string): boolean {
+  if (!value.startsWith(prefix)) {
+    return false;
+  }
+  return value.length > prefix.length && (value.charAt(prefix.length) === "/" || value.charAt(prefix.length) === "\\");
+}
+
 /**
  * Whether a CLI row's working directory belongs to the current workspace.
  * Matches when the folder equals the cwd, is a parent of it (the user opened
  * the repo root but the CLI ran in a subfolder), or the folder is a subfolder
  * of the cwd (the user opened a subfolder of the project).
+ *
+ * Segment-boundary matching accepts both `/` and `\` so POSIX-style paths and
+ * native Windows paths (where the separator is `\`) both match on any host.
  */
 export function isCwdInWorkspace(cwd: string | undefined, workspaceFolders: readonly string[]): boolean {
   if (!cwd || workspaceFolders.length === 0) {
     return false;
   }
   const rowCwd = normalizeCwd(cwd);
-  const sep = process.platform === "win32" ? "\\" : "/";
   for (const folder of workspaceFolders) {
     const normalized = normalizeCwd(folder);
     if (rowCwd === normalized) return true;
-    if (rowCwd.startsWith(`${normalized}${sep}`)) return true;
-    if (normalized.startsWith(`${rowCwd}${sep}`)) return true;
+    if (startsWithPathSegment(rowCwd, normalized)) return true;
+    if (startsWithPathSegment(normalized, rowCwd)) return true;
   }
   return false;
 }
