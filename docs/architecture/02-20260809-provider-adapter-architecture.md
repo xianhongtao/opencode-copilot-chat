@@ -226,9 +226,11 @@ Each phase gate: `npm run compile` must pass + a targeted test with at least 1 m
 
 ## Timeline
 
-| Date       | Status    | Change                                                                        |
-| ---------- | --------- | ----------------------------------------------------------------------------- |
-| 2026-08-09 | 🟢 Active | Initial research + analysis document created. Proposal only; no code changed. |
+| Date       | Status    | Change                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-08-09 | 🟢 Active | Initial research + analysis document created. Proposal only; no code changed.                                                                                                                                                                                                                                                                                                                    |
+| 2026-08-14 | ✅ Done   | God-file split executed on `refactor/split-god-files` (usage/ · transports/ · provider/ · models/ · core/ · commands/); `extension.ts` 4653 → ~414 lines. See CHANGELOG `[Unreleased]`.                                                                                                                                                                                                          |
+| 2026-08-14 | ✅ Done   | **Data-driven registry implemented** (`src/core/registry.ts`). `resolveModelRouting()` (transport) and `thinkingFamily()` both read the `MODEL_REGISTRY` table; `ModelEndpointKind` type moved to the registry. Scope note: context limits/capabilities stay metadata-driven (live models.dev) — not duplicated as a static table. The full `ModelTransport` port interface remains future work. |
 
 ---
 

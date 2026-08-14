@@ -1,6 +1,21 @@
 # 🧠 OPENCODE COPILOT CHAT DEVLOG
 
-**Branch:** `refactor/split-god-files` | **Updated:** 2026-08-14 Asia/Jakarta | **Current Phase:** god-file split complete (12 commits on `refactor/split-god-files`, ahead of `main`); prior: thinking refactor + request module split merged on `main` HEAD `f5439bb`.
+**Branch:** `refactor/split-god-files` | **Updated:** 2026-08-14 Asia/Jakarta | **Current Phase:** data-driven model registry done (13 commits on `refactor/split-god-files`); prior: god-file split complete.
+
+---
+
+## ✅ Data-driven model registry — 2026-08-14
+
+**Action:** Implemented `src/core/registry.ts` — the single data-driven source of truth for per-model wiring (architecture doc 02, item 3).
+
+**What:**
+
+- `MODEL_REGISTRY`: family rows → `{ patterns, endpointKind, sdkPackage, thinkingFamily, vendors? }` (first match wins; vendor restrictions honored).
+- `core/routing.ts` `resolveModelRouting()` now reads the registry (was an if-chain); `thinking/provider.ts` `thinkingFamily()` reads the same table vendor-agnostically (was a second hardcoded prefix table). `ModelEndpointKind` type moved to the registry, re-exported by `provider/definitions.ts`.
+- Adding a model family = one row (+ optionally a thinking strategy class). Context limits/capabilities stay metadata-driven (live models.dev).
+- New `src/test/registry.test.ts` (14 tests): transport routing × vendors, thinking family, lookup mechanics. Total **305 tests**.
+
+**Verification:** compile + 305 tests + `npm run test-retry` 7/7 + lint green. CHANGELOG `[Unreleased]` + architecture doc 02 timeline updated.
 
 ---
 

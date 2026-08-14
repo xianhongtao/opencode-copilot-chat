@@ -18,6 +18,8 @@ All notable changes to the **OpenCode Go BYOK Provider** extension are documente
   - `src/commands/` — provider, agent-window, diagnostics and thinking-picker command handlers; `src/request/headers.ts` for the OpenCode request headers.
   - `extension.ts` is now a thin entry (~400 lines) that only wires activation + command registration. The two compat barrels (`streaming.ts`, `goUsageTracker.ts`) are removed and every importer references canonical paths. All behavior-preserving — verified by `npm run compile` + 291 unit tests + mock-server retry E2E (`npm run test-retry`) + `npm run lint`.
 
+- **`[Internal]` Data-driven model registry (`src/core/registry.ts`).** The transport router and the thinking-family detector previously each owned a hardcoded model-prefix table. Both now read ONE data-driven table: `MODEL_REGISTRY` rows map model-family patterns → `{ endpointKind, sdkPackage, thinkingFamily, vendors? }`. `resolveModelRouting()` honors per-vendor restrictions (e.g. MiniMax `m2.x` → Messages on Go, Gemini → Google on Zen); `thinkingFamily()` reads the same table vendor-agnostically. Adding a new model family = adding one row (+ optionally a thinking strategy class). Context limits / capabilities stay metadata-driven (live models.dev) rather than duplicated in a static table. Behavior-preserving — verified by 14 new registry tests (305 total).
+
 ### Fixed
 
 - **DeepSeek / Mimo thinking content no longer leaks into the chat transcript.** `treatReasoningAsContent` was mis-detecting native-reasoning families as "no reasoning in body" and echoing their `reasoning_content` as plain chat text. The decision now comes from the provider strategy (always `false` for DeepSeek and Mimo), so chain-of-thought stays in the thinking panel.
