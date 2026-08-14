@@ -3,7 +3,7 @@
  * validate-models.ts — Comprehensive model parameter validation suite.
  *
  * Reuses the EXACT same logic as the extension:
- * - buildThinkingPayload() from thinking.ts
+ * - buildPayload() from the thinking provider strategy
  * - resolveModelRouting() from routing.ts
  * - buildOpenCodeGatewayAuthHeaders() from openCodeAuth.ts
  *
@@ -16,7 +16,7 @@
  */
 
 import { parseArgs } from "node:util";
-import { buildThinkingPayload, type ThinkingSettings } from "../src/thinking.js";
+import { thinkingProviderFor, type ThinkingSettings } from "../src/thinking.js";
 import { resolveModelRouting } from "../src/routing.js";
 import { buildOpenCodeGatewayAuthHeaders } from "../src/openCodeAuth.js";
 
@@ -118,7 +118,7 @@ function detectFamily(id: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Build test parameters using extension's buildThinkingPayload
+// Build test parameters using the extension's thinking provider strategy
 // ---------------------------------------------------------------------------
 
 import { THINKING_DEFAULTS } from "../src/config.js";
@@ -218,9 +218,9 @@ async function testParameter(model: ModelInfo, test: ParamTest, apiKey: string):
   // Use extension's auth headers
   const authHeaders = buildOpenCodeGatewayAuthHeaders(routing.endpointKind, apiKey);
 
-  // Build thinking payload using extension's buildThinkingPayload
+  // Build thinking payload using the extension's thinking provider strategy
   const thinking: ThinkingSettings = { ...DEFAULT_SETTINGS, ...test.settings };
-  const thinkingPayload = buildThinkingPayload(model.id, thinking, test.hasImageInput);
+  const thinkingPayload = thinkingProviderFor(model.id).buildPayload(thinking, { hasImageInput: test.hasImageInput });
 
   // Build the full request body exactly as the extension would
   const body: Record<string, unknown> = {
@@ -477,7 +477,7 @@ async function main() {
     if (DRY_RUN) {
       const summaries = tests.map((t) => {
         const thinking: ThinkingSettings = { ...DEFAULT_SETTINGS, ...t.settings };
-        const payload = buildThinkingPayload(model.id, thinking, t.hasImageInput);
+        const payload = thinkingProviderFor(model.id).buildPayload(thinking, { hasImageInput: t.hasImageInput });
         const fields = Object.keys(payload).filter((k) => k !== "model");
         return `${t.name} → ${fields.length > 0 ? JSON.stringify(payload) : "(no thinking params)"}`;
       });
