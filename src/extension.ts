@@ -2,12 +2,10 @@ import * as vscode from "vscode";
 import { OpenCodeRequestError } from "./errors";
 import {
   MODEL_METADATA_REVISION,
-  getContextSizeOptionsForModel,
   hasExplicitModelLimits,
   normalizeLiveModelMetadata,
   resolveModelMetadata,
   toEffectiveModelId,
-  VISION_CAPABLE_MODELS,
   type CachedModelMetadataSnapshot,
   type ModelMetadataFields,
   type ResolvedModelMetadata,
@@ -22,21 +20,10 @@ import {
   streamResponsesApi as runStreamResponsesApi,
   type TransportRequestSummary,
 } from "./streaming";
-import {
-  GO_VENDOR,
-  ZEN_VENDOR,
-  AGENT_GO_VENDOR,
-  AGENT_ZEN_VENDOR,
-  resolveBaseVendor,
-  type AllProviderVendor,
-  type ProviderVendor,
-} from "./providerTypes";
+import { GO_VENDOR, ZEN_VENDOR, AGENT_GO_VENDOR, AGENT_ZEN_VENDOR, resolveBaseVendor, type ProviderVendor } from "./providerTypes";
 import { providerEnabledSetting } from "./providerEnablement";
 import { registerInlineCompletions } from "./autocomplete";
-import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "./visionProxyCache";
 import { providerModelDisplayName } from "./models/modelNames";
-import { buildStableModelCapabilities } from "./models/modelCapabilities";
-import { calculateModelLimits, type ModelLimits } from "./models/modelLimits";
 import {
   buildAnthropicMessagesRequestBody,
   buildChatCompletionsRequestBody,
@@ -53,8 +40,6 @@ import {
   AGENT_HOST_BYOK_MINOR_VERSION,
   CAPACITY_LIMITED_MODEL_NOTES,
   CONFIG_SECTION,
-  DEFAULT_REQUEST_TIMEOUT_SECONDS,
-  DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
   DEFAULT_VISION_PROXY_PROMPT,
   EXTENSION_ID,
   KNOWN_UNAVAILABLE_MODEL_IDS,
@@ -64,41 +49,24 @@ import {
   MODEL_LIST_FETCH_MAX_RETRIES,
   MODEL_LIST_FETCH_RETRY_BASE_MS,
   MODEL_LIST_FETCH_TIMEOUT_MS,
-  OPEN_CODE_CLIENT,
   RECENT_TRANSPORT_SUMMARY_LIMIT,
   RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX,
   secretKeyFor,
   SETTING_AGENTS_WINDOW,
   SETTING_AUTO_ENABLE_AGENTS_WINDOW,
-  SETTING_DEBUG_REASONING,
   SETTING_ENABLED,
-  SETTING_MAX_INPUT_TOKENS,
-  SETTING_MAX_TOKENS,
-  SETTING_REQUEST_TIMEOUT_SECONDS,
   SETTING_SHOW_PROVIDER_PREFIX,
   SETTING_SHOW_USAGE_STATUS_BAR,
-  SETTING_STREAM_IDLE_TIMEOUT_SECONDS,
-  SETTING_STRIP_THINK_TAGS,
-  SETTING_TEMPERATURE,
-  SETTING_THINKING_DEEPSEEK,
-  SETTING_THINKING_GLM,
-  SETTING_THINKING_KIMI,
-  SETTING_THINKING_MIMO,
-  SETTING_THINKING_MINIMAX,
-  SETTING_THINKING_OPENAI,
-  SETTING_THINKING_QWEN,
-  SETTING_THINKING_QWEN_BUDGET,
   SETTING_VISION_PROXY_WHOLE_CONVERSATION,
   SUPPORT_AGENTS_WINDOW_SETTING,
   SUPPORT_AGENTS_WINDOW_STATE_KEY,
   TEST_CONNECTION_TIMEOUT_MS,
-  THINKING_DEFAULTS,
   VISION_PROXY_MODEL_ID_KEY,
   VISION_PROXY_PROMPT_KEY,
   DEFAULT_USAGE_CHART_DAYS,
   SETTING_USAGE_CHART_DAYS,
 } from "./config";
-import { formatCount, formatTokenCount, formatUsd, getErrorMessage, isRecord, sleep, toFiniteNumber } from "./utils";
+import { formatCount, formatTokenCount, formatUsd, getErrorMessage, sleep } from "./utils";
 import { isFreeModel } from "./models/metadata";
 import { formatCacheHitRatio } from "./usage/usage";
 
@@ -152,7 +120,6 @@ import { clearOpenCodeModelMetadataCache, getModelMetadataSnapshot, getOpenCodeM
 import {
   ConfiguredLanguageModelInfoOptions,
   ConfiguredLanguageModelResponseOptions,
-  LanguageModelConfiguration,
   ModelListEntry,
   ModelListResponse,
   OpenCodeModel,
@@ -161,8 +128,23 @@ import {
   getUserAgent,
   isTransientFetchError,
 } from "./provider/definitions";
-import { convertMessage, dataPartToBase64, normalizeMessages, trimOldImagesFromHistoryInPlace } from "./provider/messages";
-import { estimateChatMessageTokenCount, messageText } from "./provider/tokens";
+import { convertMessage, normalizeMessages, trimOldImagesFromHistoryInPlace } from "./provider/messages";
+import { estimateChatMessageTokenCount } from "./provider/tokens";
+import {
+  formatModalityBadges,
+  getConfiguredApiKey,
+  getRequestModelConfiguration,
+  getSettings,
+  isVisionProxyEnabled,
+  modelCapabilities,
+  modelConfigurationSchema,
+  modelLimits,
+  resolveRawModelId,
+  shouldHideDeprecatedModel,
+} from "./provider/settings";
+import { proxyVision, showVisionProxyPicker } from "./provider/visionProxy";
+import { modelPricingFields } from "./models/pricing";
+import { buildOpenCodeRequestHeaders, stringifyInitiator } from "./request/headers";
 
 /**
  * Hard upper limit (in bytes of raw image data) for a single image embedded
@@ -1845,700 +1827,4 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       );
     }
   }
-}
-
-function getConfiguredApiKey(options?: { configuration?: LanguageModelConfiguration }): string | undefined {
-  const configuredApiKey = options?.configuration?.apiKey;
-  return typeof configuredApiKey === "string" && configuredApiKey.trim() ? configuredApiKey.trim() : undefined;
-}
-// (chat/Anthropic/Responses/Google request builders migrated to src/request/builders.ts)
-
-// (google request builders migrated to src/request/builders.ts)
-
-// The official OpenCode client sends these headers on every request. The Zen
-// gateway reads x-opencode-session first, then converts that sticky identifier
-// into provider-specific affinity headers such as x-session-affinity upstream.
-//
-// VS Code's provider API does not currently expose a guaranteed public session
-// identifier everywhere, so we first probe a few known internal fields and then
-// fall back to a stable hash of the first messages in the conversation. That
-// preserves sticky routing and cache affinity without depending on hidden state.
-function buildOpenCodeRequestHeaders(
-  messages: readonly vscode.LanguageModelChatRequestMessage[],
-  options: vscode.ProvideLanguageModelChatResponseOptions,
-  modelId: string,
-): Record<string, string> {
-  const sessionId = cleanHeaderValue(
-    findStringOption(options, [
-      "sessionId",
-      "sessionID",
-      "chatSessionId",
-      "chatSessionID",
-      "conversationId",
-      "conversationID",
-      "threadId",
-      "threadID",
-      "session.id",
-      "chatSession.id",
-    ]) ?? `vscode-${stableHash(conversationAnchor(messages, modelId))}`,
-  );
-  const requestId = cleanHeaderValue(
-    findStringOption(options, ["requestId", "requestID", "messageId", "messageID"]) ??
-      `req-${stableHash(`${String(Date.now())}-${String(Math.random())}-${sessionId}-${modelId}`)}`,
-  );
-
-  return {
-    "x-opencode-session": sessionId,
-    "x-opencode-request": requestId,
-    "x-opencode-client": OPEN_CODE_CLIENT,
-    "User-Agent": getUserAgent(),
-  };
-}
-
-/**
- * Stringify an arbitrary transport-layer initiator value for diagnostics.
- * Objects and functions are JSON-serialized, nullish values are dropped, and
- * primitives are converted directly so logs never show "[object Object]".
- */
-function stringifyInitiator(initiator: unknown): string | undefined {
-  if (initiator === undefined || initiator === null) {
-    return undefined;
-  }
-  if (typeof initiator === "string") {
-    return initiator;
-  }
-  if (typeof initiator === "object" || typeof initiator === "function") {
-    return JSON.stringify(initiator);
-  }
-  if (typeof initiator === "symbol" || typeof initiator === "bigint") {
-    return initiator.toString();
-  }
-  if (typeof initiator === "number" || typeof initiator === "boolean") {
-    return String(initiator);
-  }
-  // No known primitive type left; nothing useful to stringify.
-  return undefined;
-}
-
-function findStringOption(options: unknown, paths: string[]): string | undefined {
-  for (const path of paths) {
-    const value = readPath(options, path.split("."));
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
-  }
-  return undefined;
-}
-
-function readPath(value: unknown, path: string[]): unknown {
-  let current = value;
-  for (const segment of path) {
-    if (!isRecord(current)) {
-      return undefined;
-    }
-    current = current[segment];
-  }
-  return current;
-}
-
-function conversationAnchor(messages: readonly vscode.LanguageModelChatRequestMessage[], modelId: string): string {
-  const anchorMessages = messages.slice(0, 3).map((message) => `${String(message.role)}:${messageText(message).slice(0, 2048)}`);
-  return anchorMessages.length ? anchorMessages.join("\n") : modelId;
-}
-
-function cleanHeaderValue(value: string): string {
-  const cleaned = value.replace(/[\r\n]/g, " ").trim();
-  return cleaned ? cleaned.slice(0, 256) : "unknown";
-}
-
-function stableHash(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index++) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-// (tool mapping + JSON-schema sanitize migrated to src/request/builders.ts)
-
-// Detect which Thinking family a raw model id belongs to. Used both to render
-// the per-model picker submenu (configurationSchema) and to map the user's
-// per-request selection back to the right OpenCode request field.
-// Per-family JSON-Schema describing the native model-picker controls rendered
-// by VS Code 1.120. Keep the primary property name aligned with VS Code's
-// BYOK reasoning control so builds with narrower assumptions still recognize it.
-// Accepts optional metadata for dynamic fallback: any model with
-// `reasoning: true` in its resolved metadata gets a generic off/on schema
-// even if no hardcoded family match exists.
-function modelConfigurationSchema(modelId: string, metadata?: ResolvedModelMetadata): vscode.LanguageModelConfigurationSchema | undefined {
-  const properties: Record<string, unknown> = {};
-
-  // --- Thinking / Reasoning Effort ---
-  // Delegated to the per-provider strategy (schemaFromReasoningOptions first,
-  // then family hardcoded, then generic reasoning fallback).
-  const builtinSchema = thinkingProviderFor(modelId, metadata).schema(metadata);
-
-  if (builtinSchema) {
-    Object.assign(properties, builtinSchema.properties);
-  }
-
-  // --- Context Size (tiered pricing) ---
-  const contextSizeOptions = metadata ? getContextSizeOptionsForModel(modelId, metadata.cost, metadata.contextWindow) : undefined;
-  if (contextSizeOptions && contextSizeOptions.length > 0) {
-    properties.contextSize = {
-      type: "number",
-      title: "Context Size",
-      enum: contextSizeOptions.map((o) => o.value),
-      enumItemLabels: contextSizeOptions.map((o) => o.label),
-      enumDescriptions: contextSizeOptions.map((o) => o.description),
-      default: contextSizeOptions.find((o) => o.isDefault)?.value ?? contextSizeOptions[0].value,
-      group: "tokens",
-    };
-  }
-
-  if (Object.keys(properties).length === 0) {
-    return undefined;
-  }
-
-  return { type: "object", properties: properties as vscode.LanguageModelConfigurationSchema["properties"] };
-}
-
-/**
- * Build the thinking-effort portion of the configuration schema.
- * Delegated to the per-provider strategy in `./thinking` (pure, testable).
- */
-
-function getRequestModelConfiguration(options: vscode.ProvideLanguageModelChatResponseOptions): Record<string, unknown> | undefined {
-  // The field is `modelConfiguration` in the current proposed API; older
-  // builds shipped it under `configuration` alongside the auth config. Accept
-  // both shapes defensively so the picker keeps working across VS Code
-  // versions.
-  const opts = options as vscode.ProvideLanguageModelChatResponseOptions & {
-    modelConfiguration?: Record<string, unknown>;
-    configuration?: Record<string, unknown>;
-  };
-  return opts.modelConfiguration ?? opts.configuration;
-}
-
-function getSettings(): ApiSettings {
-  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-
-  // Config values are sanitized so a misconfigured (e.g. string) value never
-  // reaches the request body and 400s upstream.
-  return {
-    temperature: toFiniteNumber(config.get(SETTING_TEMPERATURE, 0.2), 0.2),
-    maxOutputTokensOverride: toFiniteNumber(config.get(SETTING_MAX_TOKENS, 0), 0, 0),
-    maxInputTokensOverride: toFiniteNumber(config.get(SETTING_MAX_INPUT_TOKENS, 0), 0, 0),
-    debugReasoning: config.get(SETTING_DEBUG_REASONING, false),
-    requestTimeoutMs:
-      toFiniteNumber(config.get(SETTING_REQUEST_TIMEOUT_SECONDS, DEFAULT_REQUEST_TIMEOUT_SECONDS), DEFAULT_REQUEST_TIMEOUT_SECONDS, 1) *
-      1000,
-    streamIdleTimeoutMs:
-      toFiniteNumber(
-        config.get(SETTING_STREAM_IDLE_TIMEOUT_SECONDS, DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS),
-        DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
-        1,
-      ) * 1000,
-    thinking: {
-      deepseek: config.get<ThinkingSettings["deepseek"]>(SETTING_THINKING_DEEPSEEK, THINKING_DEFAULTS.deepseek),
-      glm: config.get<ThinkingSettings["glm"]>(SETTING_THINKING_GLM, THINKING_DEFAULTS.glm),
-      kimi: config.get<ThinkingSettings["kimi"]>(SETTING_THINKING_KIMI, THINKING_DEFAULTS.kimi),
-      minimax: config.get<ThinkingSettings["minimax"]>(SETTING_THINKING_MINIMAX, THINKING_DEFAULTS.minimax),
-      openai: config.get<ThinkingSettings["openai"]>(SETTING_THINKING_OPENAI, THINKING_DEFAULTS.openai),
-      qwen: config.get<ThinkingSettings["qwen"]>(SETTING_THINKING_QWEN, THINKING_DEFAULTS.qwen),
-      qwenBudget: config.get<ThinkingSettings["qwenBudget"]>(SETTING_THINKING_QWEN_BUDGET, THINKING_DEFAULTS.qwenBudget),
-      mimo: config.get<ThinkingSettings["mimo"]>(SETTING_THINKING_MIMO, THINKING_DEFAULTS.mimo),
-    },
-    stripThinkTags: config.get<ApiSettings["stripThinkTags"]>(SETTING_STRIP_THINK_TAGS, "auto"),
-  };
-}
-
-// The thinking provider strategies (thinkingProviderFor, resolveThinkingConfig)
-// are imported from ./thinking (pure, testable).
-
-function modelLimits(
-  metadata: ResolvedModelMetadata,
-  settings = getSettings(),
-  contextSizeOverride?: number,
-  promptTokens?: number,
-): ModelLimits {
-  return calculateModelLimits(metadata, {
-    maxInputTokens: settings.maxInputTokensOverride,
-    maxOutputTokens: settings.maxOutputTokensOverride,
-    contextSize: contextSizeOverride,
-    promptTokens,
-  });
-}
-
-function modelCapabilities(metadata: ResolvedModelMetadata): vscode.LanguageModelChatCapabilities {
-  // When a vision proxy model is configured (non-empty ID in globalState),
-  // report imageInput: true for ALL models so VS Code does not strip image
-  // parts before they reach our provider. The vision proxy interceptor
-  // forwards images to the configured model transparently.
-  const supportsVision = metadata.supportsVision || isVisionProxyEnabled();
-
-  // `editTools` is intentionally absent. VS Code 1.132 still gates that hint
-  // behind the chatProvider proposal for non-allowlisted extensions.
-  return buildStableModelCapabilities(supportsVision);
-}
-
-function formatModalityBadges(metadata: ResolvedModelMetadata): string {
-  const badges: string[] = [];
-  if (metadata.supportsVision) {
-    badges.push("Image");
-  }
-  if (metadata.supportsPdf) {
-    badges.push("PDF");
-  }
-  if (metadata.supportsVideo) {
-    badges.push("Video");
-  }
-  if (metadata.supportsAudio) {
-    badges.push("Audio");
-  }
-  return badges.join(" · ");
-}
-
-function shouldHideDeprecatedModel(modelId: string, vendor: ProviderDefinition["vendor"], snapshot: CachedModelMetadataSnapshot): boolean {
-  if (resolveBaseVendor(vendor) !== ZEN_VENDOR) {
-    return false;
-  }
-  return snapshot.providers[ZEN_VENDOR]?.[modelId]?.status === "deprecated";
-}
-
-function resolveRawModelId(modelId: string): string {
-  const [base] = modelId.split("::");
-  const prefixes = [`${GO_VENDOR}:`, `${ZEN_VENDOR}:`, `${AGENT_GO_VENDOR}:`, `${AGENT_ZEN_VENDOR}:`];
-  for (const prefix of prefixes) {
-    if (base.startsWith(prefix)) {
-      return base.slice(prefix.length);
-    }
-  }
-  return base;
-}
-
-/** Result of a vision-proxy pass: per-message descriptions plus cache stats. */
-interface VisionProxyResult {
-  /** Original message index → text description (only for messages with images). */
-  descriptions: ReadonlyMap<number, string>;
-  /** Messages whose images were already cached — no vision model request was made. */
-  cacheHits: number;
-  /** Messages that required a new vision-model request. */
-  cacheMisses: number;
-}
-
-/**
- * Collect the parts of a single message that the vision proxy should see:
- * image parts plus text parts, dropping tool parts.
- */
-function collectRequestParts(msg: vscode.LanguageModelChatRequestMessage): (vscode.LanguageModelTextPart | vscode.LanguageModelDataPart)[] {
-  const parts: (vscode.LanguageModelTextPart | vscode.LanguageModelDataPart)[] = [];
-  for (const part of msg.content) {
-    if (part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/")) {
-      parts.push(part);
-    } else if (part instanceof vscode.LanguageModelTextPart) {
-      parts.push(part);
-    } else if (typeof part === "object" && part !== null && "value" in part) {
-      parts.push(new vscode.LanguageModelTextPart(String(part.value)));
-    }
-  }
-  return parts;
-}
-
-/**
- * Build a vision-model request for a single message: keep its image parts and
- * text parts (dropping tool parts), then append the vision prompt. This lets
- * the proxy describe ONLY the message that contains a new image, instead of
- * re-sending the whole conversation on every turn.
- */
-/**
- * Build a vision-model request: keep image and text parts from every message
- * (dropping tool parts), then append the vision prompt. Used both for the
- * per-message path (single message) and the whole-conversation path (all
- * messages) when `opencodego.visionProxyWholeConversation` is enabled.
- */
-function buildVisionRequest(
-  messages: readonly vscode.LanguageModelChatRequestMessage[],
-  visionPrompt: string,
-): vscode.LanguageModelChatMessage[] {
-  const requestMessages: vscode.LanguageModelChatMessage[] = [];
-  for (const msg of messages) {
-    const parts = collectRequestParts(msg);
-    if (parts.length > 0) {
-      requestMessages.push(
-        new vscode.LanguageModelChatMessage(
-          msg.role === vscode.LanguageModelChatMessageRole.Assistant
-            ? vscode.LanguageModelChatMessageRole.Assistant
-            : vscode.LanguageModelChatMessageRole.User,
-          parts,
-        ),
-      );
-    }
-  }
-  // Append the vision prompt
-  if (visionPrompt) {
-    requestMessages.push(vscode.LanguageModelChatMessage.User(visionPrompt));
-  }
-  return requestMessages;
-}
-
-/**
- * Vision proxy: relay image messages through a vision-capable Copilot model
- * and return the text description. This lets text-only models "see" images
- * transparently (issue #74).
- *
- * By default (`describeWholeConversation` false), descriptions are cached per
- * image (`imageDescriptionCache`). A message whose images are ALL already
- * cached is reused without contacting the vision model; only messages that
- * contain at least one new image trigger a `sendRequest()` - for that single
- * message + prompt - and the result is stored in the cache for future turns.
- *
- * When `describeWholeConversation` is true (setting
- * `opencodego.visionProxyWholeConversation`), the proxy sends ONE request over
- * the whole conversation so descriptions keep full context; the combined
- * description is still stored under every image hash.
- */
-async function proxyVision(
-  messages: readonly vscode.LanguageModelChatRequestMessage[],
-  visionModelId: string,
-  visionPrompt: string,
-  describeWholeConversation: boolean,
-  token: vscode.CancellationToken,
-): Promise<VisionProxyResult> {
-  const descriptions = new Map<number, string>();
-  let cacheHits = 0;
-  let cacheMisses = 0;
-
-  // Find the vision model lazily — only when a message actually needs a new
-  // description. When every image is already cached we never call
-  // `vscode.lm.selectChatModels()` or `model.sendRequest()`.
-  let visionModel: vscode.LanguageModelChat | undefined;
-  const resolveVisionModel = async (): Promise<vscode.LanguageModelChat> => {
-    if (visionModel) {
-      return visionModel;
-    }
-    // Matching strategies:
-    // 1. Exact id match (full internal model id)
-    // 2. Vendor:id partial (e.g. "opencodego:mimo-v2.5")
-    // 3. Name or id substring (e.g. "mimo-v2.5" or "Mimo V2.5")
-    // Filter out agent-host variants — they use a different transport and
-    // don't have vision support. Prefer non-agent models.
-    const nonAgent = (models: readonly vscode.LanguageModelChat[]) => models.filter((m) => !m.id.includes("-agent:"));
-
-    let visionModels = nonAgent(await vscode.lm.selectChatModels({ id: visionModelId }));
-    if (visionModels.length === 0) {
-      // Try matching by name substring across all providers
-      const allVisible = nonAgent(await vscode.lm.selectChatModels({}));
-      visionModels = allVisible.filter(
-        (m) =>
-          m.id.toLowerCase().includes(visionModelId.toLowerCase()) ||
-          m.name.toLowerCase().includes(visionModelId.toLowerCase()) ||
-          m.family.toLowerCase().includes(visionModelId.toLowerCase()),
-      );
-    }
-    if (visionModels.length === 0) {
-      throw new Error(`Vision model "${visionModelId}" not found. ` + `Run "OpenCode Go: Configure Vision Proxy" to see available models.`);
-    }
-
-    // All models that matched are candidates. `selectChatModels` returns
-    // `LanguageModelChat` which does not expose capabilities in the stable
-    // API, so we just use the first match. Most vision models handle image
-    // input gracefully — models without vision will report the error.
-    visionModel = visionModels[0];
-    return visionModel;
-  };
-
-  // Whole-conversation mode (opencodego.visionProxyWholeConversation): one
-  // request over all messages, so descriptions carry full conversation context.
-  if (describeWholeConversation) {
-    const imageIndices: number[] = [];
-    const allHashes: string[] = [];
-    for (let index = 0; index < messages.length; index++) {
-      const msg = messages[index];
-      const imageParts = msg.content.filter(
-        (part): part is vscode.LanguageModelDataPart => part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
-      );
-      if (imageParts.length === 0) {
-        continue;
-      }
-      imageIndices.push(index);
-      allHashes.push(...imageParts.map((part) => imageDescriptionKey(dataPartToBase64(part.data))));
-    }
-    if (imageIndices.length > 0) {
-      cacheMisses++;
-      const model = await resolveVisionModel();
-      const response = await model.sendRequest(buildVisionRequest(messages, visionPrompt), {}, token);
-      let fullDescription = "";
-      for await (const part of response.text) {
-        fullDescription += part;
-      }
-      if (fullDescription) {
-        storeImageDescriptions(allHashes, fullDescription);
-        for (const index of imageIndices) {
-          descriptions.set(index, fullDescription);
-        }
-      }
-    }
-    return { descriptions, cacheHits, cacheMisses };
-  }
-
-  for (let index = 0; index < messages.length; index++) {
-    const msg = messages[index];
-    const imageParts = msg.content.filter(
-      (part): part is vscode.LanguageModelDataPart => part instanceof vscode.LanguageModelDataPart && part.mimeType.startsWith("image/"),
-    );
-    if (imageParts.length === 0) {
-      continue;
-    }
-    const hashes = imageParts.map((part) => imageDescriptionKey(dataPartToBase64(part.data)));
-
-    // All images already described → reuse the cached text, no model request.
-    const cachedDescription = lookupImageDescriptions(hashes);
-    if (cachedDescription !== undefined) {
-      cacheHits++;
-      descriptions.set(index, cachedDescription);
-      continue;
-    }
-
-    // At least one new image → describe only this message and cache the result.
-    cacheMisses++;
-    const model = await resolveVisionModel();
-    const response = await model.sendRequest(buildVisionRequest([msg], visionPrompt), {}, token);
-    let fullDescription = "";
-    for await (const part of response.text) {
-      fullDescription += part;
-    }
-    if (!fullDescription) {
-      continue;
-    }
-    storeImageDescriptions(hashes, fullDescription);
-    descriptions.set(index, fullDescription);
-  }
-
-  return { descriptions, cacheHits, cacheMisses };
-}
-
-// ---------------------------------------------------------------------------
-// Vision proxy — globalState storage keys & defaults
-// ---------------------------------------------------------------------------
-
-/**
- * True when a vision proxy model has been configured (non-empty model ID
- * stored in globalState via the "OpenCode Go: Configure Vision Proxy" command).
- */
-function isVisionProxyEnabled(): boolean {
-  return extensionContext().globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "").length > 0;
-}
-
-/**
- * QuickPick to configure vision proxy model and prompt.
- * Clean list of model names (no ugly IDs), with "None" to disable
- * and "Customize prompt..." to edit the description instruction.
- * Saves to globalState; toggles the visionProxy boolean accordingly.
- */
-async function showVisionProxyPicker(context: vscode.ExtensionContext): Promise<void> {
-  const currentModelId = context.globalState.get<string>(VISION_PROXY_MODEL_ID_KEY, "");
-  const currentPrompt = context.globalState.get<string>(VISION_PROXY_PROMPT_KEY, "") || DEFAULT_VISION_PROXY_PROMPT;
-
-  // --- Build the set of vision-capable model IDs ---
-  const visionCapableIds = new Set<string>();
-  const snapshot = getModelMetadataSnapshot();
-  if (snapshot) {
-    for (const vendor of [GO_VENDOR, ZEN_VENDOR] as const) {
-      const provider = snapshot.providers[vendor];
-      if (!provider) continue;
-      for (const [id, meta] of Object.entries(provider)) {
-        if (meta.supportsVision) visionCapableIds.add(`${vendor}:${id}`);
-      }
-    }
-  }
-  for (const family of VISION_CAPABLE_MODELS) {
-    visionCapableIds.add(`copilot:${family}`);
-  }
-
-  // --- Build QuickPick items from available models ---
-  const allModels = (await vscode.lm.selectChatModels({})).filter((m) => !m.id.includes("-agent:"));
-
-  const modelItems = allModels
-    .map((m) => {
-      const rawId = resolveRawModelId(m.id);
-      const vendor = resolveVendorFromId(m.id);
-      const lookupId = `${vendor}:${rawId}`;
-      const fromLookup = visionCapableIds.has(lookupId);
-      const fromName = [...visionCapableIds].some((id) => m.id.includes(id.replace(/^(opencodego|opencodezen|copilot):/, "")));
-      const supportsVision = fromLookup || fromName;
-      return {
-        label: m.name,
-        description: supportsVision ? "$(eye)" : "",
-        detail: supportsVision ? (m.id === currentModelId ? "currently configured" : "vision-capable") : "",
-        picked: m.id === currentModelId,
-        _id: m.id,
-        _kind: "model" as const,
-        _supportsVision: supportsVision,
-      };
-    })
-    .filter((m) => m._supportsVision);
-
-  if (modelItems.length === 0) {
-    vscode.window.showInformationMessage(
-      "No vision-capable models found. Make sure you have a Copilot Chat provider with vision models installed.",
-    );
-    return;
-  }
-
-  modelItems.sort((a, b) => {
-    if (a._id === currentModelId) return -1;
-    if (b._id === currentModelId) return 1;
-    return a.label.localeCompare(b.label);
-  });
-
-  const items: {
-    label: string;
-    description?: string;
-    detail?: string;
-    picked?: boolean;
-    _id?: string;
-    _kind: "none" | "prompt" | "model" | "separator";
-    _supportsVision?: boolean;
-    kind?: vscode.QuickPickItemKind;
-  }[] = [
-    { label: "$(circle-slash) None (disable)", detail: currentModelId ? "" : "currently selected", picked: !currentModelId, _kind: "none" },
-    { label: "", kind: vscode.QuickPickItemKind.Separator, _kind: "separator" },
-    {
-      label: "$(edit) Customize description prompt...",
-      description: "$(info) Sets how the vision model describes images",
-      _kind: "prompt",
-    },
-    { label: "", kind: vscode.QuickPickItemKind.Separator, _kind: "separator" },
-    ...modelItems,
-  ];
-
-  const picked = await vscode.window.showQuickPick(items, {
-    placeHolder: "Pick a model, customize the prompt, or disable",
-    title: "OpenCode Go — Vision Proxy",
-    matchOnDescription: true,
-  });
-
-  if (!picked || !("_kind" in picked)) return;
-
-  // --- "Customize prompt..." ---
-  if (picked._kind === "prompt") {
-    const newPrompt = await vscode.window.showInputBox({
-      title: "Vision Proxy — Description Prompt",
-      prompt: "Prompt sent to the vision model to describe the image.",
-      value: currentPrompt,
-      placeHolder: DEFAULT_VISION_PROXY_PROMPT,
-      validateInput: (value: string) => (value.trim() ? undefined : "Prompt cannot be empty."),
-    });
-    if (newPrompt === undefined) return; // cancelled
-    await context.globalState.update(VISION_PROXY_PROMPT_KEY, newPrompt.trim());
-    vscode.window.showInformationMessage("Vision proxy prompt updated.");
-    return;
-  }
-
-  // --- "None" ---
-  if (picked._kind === "none") {
-    await context.globalState.update(VISION_PROXY_MODEL_ID_KEY, "");
-    vscode.window.showInformationMessage("Vision proxy disabled.");
-    return;
-  }
-
-  // --- Model selected ---
-  if (!picked._id) return;
-  await context.globalState.update(VISION_PROXY_MODEL_ID_KEY, picked._id);
-  vscode.window.showInformationMessage(`Vision proxy set to: ${picked.label}`);
-}
-
-/** Best-effort vendor resolution from a model ID. */
-function resolveVendorFromId(modelId: string): AllProviderVendor {
-  if (modelId.startsWith(`${AGENT_GO_VENDOR}:`)) return AGENT_GO_VENDOR;
-  if (modelId.startsWith(`${AGENT_ZEN_VENDOR}:`)) return AGENT_ZEN_VENDOR;
-  if (modelId.startsWith(`${ZEN_VENDOR}:`)) return ZEN_VENDOR;
-  return GO_VENDOR;
-}
-
-/**
- * Returns pricing fields for VS Code's language model pricing proposal
- * (`vscode.proposed.languageModelPricing`).
- *
- * Cost data from models.dev is in USD; VS Code expects AI Credits
- * (1 credit = $0.01 USD). We convert by multiplying by 100 so the
- * pricing table shows values comparable to Copilot's own models.
- *
- * The `pricing` string matches the format used by the Copilot extension's
- * `formatPricingLabel` (`In: $X · Out: $Y /1M tokens`) so the picker hover
- * reads consistently across providers.
- */
-function modelPricingFields(
-  modelId: string,
-  vendor: ProviderDefinition["vendor"],
-  metadata: ResolvedModelMetadata,
-): {
-  pricing?: string;
-  priceCategory?: string;
-  inputCost?: number;
-  outputCost?: number;
-  cacheCost?: number;
-} {
-  const free = isFreeModel(modelId);
-
-  if (free) {
-    return { pricing: "Free", priceCategory: "low" };
-  }
-
-  const cost = metadata.cost;
-  if (cost) {
-    const inputCredits = Math.round(cost.input * 100);
-    const outputCredits = Math.round(cost.output * 100);
-    const cacheCredits = cost.cache_read !== undefined ? Math.round(cost.cache_read * 100) : undefined;
-
-    const fmt = (v: number) => `$${v.toFixed(v < 0.1 ? 2 : 1)}`;
-    return {
-      pricing: `In: ${fmt(cost.input)} · Out: ${fmt(cost.output)} /1M tokens`,
-      priceCategory: costCategory(cost),
-      inputCost: inputCredits,
-      outputCost: outputCredits,
-      ...(cacheCredits !== undefined ? { cacheCost: cacheCredits } : {}),
-    };
-  }
-
-  // No models.dev cost data: fall back to a neutral label so the picker
-  // shows something instead of pretending we know the price.
-  return {
-    pricing: `${vendor === GO_VENDOR ? "Go" : "Zen"} subscription`,
-  };
-}
-
-/**
- * Maps per-million-token USD cost to the four-tier `priceCategory` labels
- * (`low` / `medium` / `high` / `very_high`) that VS Code's language model
- * picker renders as a visual cost indicator.
- *
- * VS Code's own `getPriceCategoryLabel` (chatModelPicker.ts) just translates
- * the string but does not assign thresholds - the Copilot extension uses
- * billing multipliers and a weighted 3:1 input:output blend to mirror the
- * user's billing mix. We follow the same 3:1 weighting here so our category
- * lines up with what the user sees for the official Copilot models:
- *
- * - low       : qwen3.5-plus, deepseek-v4-flash-free, mimo-v2-flash-free
- * - medium    : kimi-k2.6, gemini-3-flash, claude-haiku-4-5, gpt-5,
- *               gpt-5.2, gpt-5.4, claude-sonnet-4-6
- * - high      : claude-opus-4-5, claude-opus-4-7, gpt-5.5
- * - very_high : gpt-5.4-pro, gpt-5.5-pro, claude-opus-4-1
- *
- * Free models (`cost.input == 0 && cost.output == 0`) are reported as `low`
- * because that is the bucket VS Code uses for "Free" entries in the picker.
- */
-function costCategory(cost: { input: number; output: number }): string {
-  if (cost.input <= 0 && cost.output <= 0) {
-    return "low";
-  }
-  // Mirrors Copilot's 3:1 input:output blend (input tokens are usually the
-  // larger share of a request, so they get more weight than raw sum).
-  const weighted = cost.input * 3 + cost.output;
-  if (weighted <= 2) return "low";
-  if (weighted <= 25) return "medium";
-  if (weighted <= 50) return "high";
-  return "very_high";
 }
