@@ -46,6 +46,8 @@ import {
   TRANSIENT_5XX_RETRY_JITTER_MS,
   UI_OUTPUT_TOKEN_RESERVE,
   WEEK_MS,
+  ZEN_SECRET_KEY,
+  secretKeyFor,
 } from "../config.js";
 
 /**
@@ -69,6 +71,14 @@ describe("config — identity", () => {
     assert.equal(EXTENSION_ID, "ltmoerdani.opencode-copilot-chat");
     assert.equal(SECRET_KEY, "opencodego.apiKey");
     expectValue("FALLBACK_USER_AGENT", FALLBACK_USER_AGENT, (v) => v.startsWith("opencode-copilot-chat/"), "versioned prefix");
+  });
+});
+
+describe("config — secret keys", () => {
+  it("resolves per-vendor SecretStorage keys so Go and Zen never collide", () => {
+    assert.equal(secretKeyFor("opencodego"), SECRET_KEY);
+    assert.equal(secretKeyFor("opencodezen"), ZEN_SECRET_KEY);
+    assert.notEqual(secretKeyFor("opencodego"), secretKeyFor("opencodezen"));
   });
 });
 

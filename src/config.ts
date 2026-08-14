@@ -17,8 +17,15 @@
 
 /** VS Code extension ID (used for `extensions.supportAgentsWindow.<id>`). */
 export const EXTENSION_ID = "ltmoerdani.opencode-copilot-chat";
-/** SecretStorage key for the API key. */
+/** SecretStorage key for the OpenCode Go API key (legacy name preserved). */
 export const SECRET_KEY = "opencodego.apiKey";
+/** SecretStorage key for the OpenCode Zen API key (per-vendor, so Go and Zen
+ * never overwrite each other's key). */
+export const ZEN_SECRET_KEY = "opencodezen.apiKey";
+/** Resolve the SecretStorage key for a provider vendor. */
+export function secretKeyFor(vendor: "opencodego" | "opencodezen"): string {
+  return vendor === "opencodezen" ? ZEN_SECRET_KEY : SECRET_KEY;
+}
 /** Client name sent in the `x-opencode-client` header. */
 export const OPEN_CODE_CLIENT = "vscode-copilot-chat";
 /** Fallback only — overridden at runtime from packageJSON.version. */

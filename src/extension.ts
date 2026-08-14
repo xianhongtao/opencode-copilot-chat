@@ -85,7 +85,7 @@ import {
   OPEN_CODE_CLIENT,
   RECENT_TRANSPORT_SUMMARY_LIMIT,
   RECENT_TRANSPORT_SUMMARY_STORAGE_PREFIX,
-  SECRET_KEY,
+  secretKeyFor,
   SETTING_AGENTS_WINDOW,
   SETTING_AUTO_ENABLE_AGENTS_WINDOW,
   SETTING_DEBUG_REASONING,
@@ -732,7 +732,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
   // Pull the server-accurate account meters once at startup (TTL-guarded).
   void (async () => {
-    const apiKey = await context.secrets.get(SECRET_KEY);
+    const apiKey = await context.secrets.get(secretKeyFor(GO_VENDOR));
     if (!apiKey) return;
     await syncTrackerUsage(getOrCreateTracker(keyFingerprint(apiKey)), apiKey);
   })();
@@ -755,7 +755,6 @@ export function activate(context: vscode.ExtensionContext) {
     ...(zenProviderEnabled ? [vscode.lm.registerLanguageModelChatProvider(ZEN_VENDOR, zenProvider)] : []),
     vscode.commands.registerCommand("opencodego.manage", () => goProvider.manage()),
     vscode.commands.registerCommand("opencodego.diagnostics", () => goProvider.showDiagnostics()),
-    vscode.commands.registerCommand("opencodego.setApiKey", () => goProvider.setApiKey()),
     vscode.commands.registerCommand("opencodego.refreshModels", () => goProvider.refreshModels()),
     vscode.commands.registerCommand("opencodego.toggleProvider", () => toggleProviderEnabled(GO_VENDOR, "OpenCode Go")),
     vscode.commands.registerCommand("opencodego.configureUtilityModels", () => configureUtilityModels()),
@@ -993,7 +992,7 @@ export function activate(context: vscode.ExtensionContext) {
     chatCompletionsUrl: PROVIDERS[GO_VENDOR].chatCompletionsUrl,
     // Same resolution order as the chat path: the active profile's own key
     // first (covers multi-profile / BYOK-group setups), then the secret.
-    resolveApiKey: async () => profileApiKeys.get(activeProfileFingerprint) ?? _extensionContext?.secrets.get(SECRET_KEY),
+    resolveApiKey: async () => profileApiKeys.get(activeProfileFingerprint) ?? _extensionContext?.secrets.get(secretKeyFor(GO_VENDOR)),
   });
 }
 
@@ -1296,7 +1295,7 @@ function refreshGoUsageStatusBar(): void {
   // a new snapshot lands, rebuild the status bar with it. Use the active
   // profile's own key when known, falling back to the extension secret.
   void (async () => {
-    const apiKey = profileApiKeys.get(activeProfileFingerprint) ?? (await _extensionContext?.secrets.get(SECRET_KEY));
+    const apiKey = profileApiKeys.get(activeProfileFingerprint) ?? (await _extensionContext?.secrets.get(secretKeyFor(GO_VENDOR)));
     if (!apiKey) return;
     const changed = await tracker.syncServerUsage(apiKey);
     if (changed) refreshGoUsageStatusBar();
@@ -2298,10 +2297,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   private async markByokGroupConfigured(): Promise<void> {
     await this.context.globalState.update(this.byokGroupStateKey, true);
   }
-
-  private async clearByokGroupConfigured(): Promise<void> {
-    await this.context.globalState.update(this.byokGroupStateKey, undefined);
-  }
   /** Capped to prevent unbounded growth across long sessions. */
   private readonly reasoningContentByToolCallId = new Map<string, string>();
   private static readonly REASONING_CACHE_LIMIT = 500;
@@ -2476,7 +2471,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     await clearOpenCodeModelMetadataCache(this.context);
     // Pass the stored API key so the gateway sees the authenticated
     // (per-key) model list, not the anonymous default.
-    const apiKey = await this.context.secrets.get(SECRET_KEY);
+    const apiKey = await this.context.secrets.get(secretKeyFor(this.baseVendor));
     await this.fetchModels(apiKey);
   }
 
@@ -2487,7 +2482,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
    * - Skips the Manage Provider QuickPick and goes straight to a fetch.
    * - Reuses {@link refreshMetadataAndModels}, fires the change emitter so
    *   VS Code re-resolves the picker, and surfaces an informational toast.
-   * - On missing API key, falls back to {@link setApiKey} (same as Manage).
+   * - On missing API key, points the user at the BYOK flow instead of
+   *   prompting for a key (API keys are configured via Manage Language
+   *   Models / "+ Add Models" only).
    *
    * Background: this was added after issue #78 revealed that "Refresh Models"
    * was only reachable as a sub-item inside `OpenCode Go: Manage Provider`
@@ -2495,9 +2492,11 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
    * what users naturally type in the Command Palette.
    */
   async refreshModels(): Promise<void> {
-    const apiKey = await this.context.secrets.get(SECRET_KEY);
+    const apiKey = await this.context.secrets.get(secretKeyFor(this.baseVendor));
     if (!apiKey) {
-      await this.setApiKey();
+      vscode.window.showErrorMessage(
+        `${this.definition.displayName}: No API key configured. Add the provider via Manage Language Models ("+ Add Models" → ${this.definition.displayName}) first.`,
+      );
       return;
     }
     await this.refreshMetadataAndModels();
@@ -2511,8 +2510,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const providerEnabled = vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(this.definition.vendor), true);
     const choice = await vscode.window.showQuickPick(
       [
-        { label: "Set API Key", action: "set" as const },
-        { label: "Clear API Key", action: "clear" as const },
         { label: "Test Connection", action: "test" as const },
         { label: "Refresh Models", action: "refresh" as const },
         { label: "Configure Utility Models", action: "utility" as const },
@@ -2536,26 +2533,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       return;
     }
 
-    if (choice.action === "set") {
-      await this.setApiKey();
-      return;
-    }
-
-    if (choice.action === "clear") {
-      await this.context.secrets.delete(SECRET_KEY);
-      // Reset the BYOK-group flag (issue #106) so the extension's own
-      // secret-storage flow takes over again. If the user still has a group
-      // configured in VS Code's Manage Models panel, the next picker
-      // resolution will re-mark the flag and re-store the group key — to
-      // fully remove the key, clear it from the Manage Models panel too.
-      await this.clearByokGroupConfigured();
-      this.changeEmitter.fire();
-      vscode.window.showInformationMessage(
-        `${this.definition.displayName} API key cleared. If you also set it via Manage Models, remove it there too.`,
-      );
-      return;
-    }
-
     if (choice.action === "test") {
       await this.testConnection();
       return;
@@ -2575,9 +2552,11 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
   }
 
   async testConnection(): Promise<void> {
-    const apiKey = await this.context.secrets.get(SECRET_KEY);
+    const apiKey = await this.context.secrets.get(secretKeyFor(this.baseVendor));
     if (!apiKey) {
-      vscode.window.showErrorMessage(`${this.definition.displayName}: No API key set. Use 'Set API Key' first.`);
+      vscode.window.showErrorMessage(
+        `${this.definition.displayName}: No API key configured. Add the provider via Manage Language Models ("+ Add Models" → ${this.definition.displayName}) first.`,
+      );
       return;
     }
 
@@ -2621,24 +2600,6 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     }
   }
 
-  async setApiKey(): Promise<void> {
-    const apiKey = await vscode.window.showInputBox({
-      title: `${this.definition.displayName} API Key`,
-      prompt: `Paste your ${this.definition.displayName} API key. It will be stored securely in VS Code SecretStorage.`,
-      password: true,
-      ignoreFocusOut: true,
-    });
-
-    const normalizedApiKey = apiKey?.trim();
-    if (!normalizedApiKey) {
-      return;
-    }
-
-    await this.context.secrets.store(SECRET_KEY, normalizedApiKey);
-    this.changeEmitter.fire();
-    vscode.window.showInformationMessage(`${this.definition.displayName} API key saved.`);
-  }
-
   async showDiagnostics(): Promise<void> {
     let models: readonly vscode.LanguageModelChat[] = [];
     let modelSelectionError: string | undefined;
@@ -2648,7 +2609,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       modelSelectionError = getErrorMessage(error);
     }
 
-    const hasStoredApiKey = Boolean(await this.context.secrets.get(SECRET_KEY));
+    const hasStoredApiKey = Boolean(await this.context.secrets.get(secretKeyFor(this.baseVendor)));
     const metadataSnapshot = await this.getMetadataSnapshot();
     const lines = models.map((model) => {
       const rawModelId = resolveRawModelId(model.id);
@@ -2758,7 +2719,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
       if (this.hasByokGroupConfigured()) {
         return [];
       }
-      apiKey = await this.context.secrets.get(SECRET_KEY);
+      apiKey = await this.context.secrets.get(secretKeyFor(this.baseVendor));
     }
 
     if (!apiKey) {
@@ -2769,9 +2730,9 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     // agent-variant providers (which have no BYOK entry) can inherit it
     // from the extension's secret storage.
     if (!this.definition.isAgentVariant) {
-      const existing = await this.context.secrets.get(SECRET_KEY);
+      const existing = await this.context.secrets.get(secretKeyFor(this.baseVendor));
       if (existing !== apiKey) {
-        await this.context.secrets.store(SECRET_KEY, apiKey);
+        await this.context.secrets.store(secretKeyFor(this.baseVendor), apiKey);
       }
     }
 
@@ -2903,7 +2864,7 @@ class OpenCodeProvider implements vscode.LanguageModelChatProvider<OpenCodeModel
     const apiKey = resolveResponseApiKey(
       getConfiguredApiKey(options as ConfiguredLanguageModelResponseOptions),
       this.apiKeysByModelId.get(model.id),
-      await this.context.secrets.get(SECRET_KEY),
+      await this.context.secrets.get(secretKeyFor(this.baseVendor)),
     );
 
     if (!apiKey) {

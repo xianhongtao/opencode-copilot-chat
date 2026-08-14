@@ -42,7 +42,7 @@
 | 🎯 **Smart routing**             | Each model family auto-routes to its native transport (`/responses`, `/messages`, `streamGenerateContent`, `/chat/completions`)                                                                                                                       |
 | 🖼️ **Vision + PDF + Audio**      | Multimodal models pass through image, PDF, audio, and video inputs. Oversized images auto-resize to 2000×2000 / 5MB to match the gateway contract.                                                                                                    |
 | 📐 **Context-size picker**       | Kimi K3 and other tiered-context models expose `256K` vs full-window selection in the per-model configuration, with the cheaper tier selected by default.                                                                                             |
-| 🔒 **Your key, your control**    | API key stored in VS Code SecretStorage — never leaves your machine                                                                                                                                                                                   |
+| 🔒 **Your key, your control**    | API key entered once in Language Models → **Add Models…** — stored by VS Code, never leaves your machine                                                                                                                                              |
 
 ---
 
@@ -69,7 +69,7 @@
 5. **Click the model picker** (current model name) → **Add Models…**
 6. **Select** **OpenCode Go** or **OpenCode Zen**.
 7. **Press Enter** to accept the default group name.
-8. **Paste your API key** when prompted (stored securely in VS Code SecretStorage).
+8. **Paste your API key** when prompted (stored by VS Code in your language-models configuration).
 9. **Pick the models** you want enabled.
 10. **Select any OpenCode model** from the picker and start chatting. 🚀
 
@@ -421,11 +421,10 @@ The easiest way to manage your key is **Settings → Language Models** (gear ⚙
 
 | Command                                                   | Description                                                     |
 | --------------------------------------------------------- | --------------------------------------------------------------- |
-| `OpenCode Go: Manage Provider`                            | Manage legacy API key, refresh models, test connection          |
-| `OpenCode Go: Set API Key`                                | Store/update legacy OpenCode Go API key                         |
+| `OpenCode Go: Manage Provider`                            | Test connection, refresh models, configure utility models       |
 | `OpenCode Go: Refresh Models`                             | Force a fresh model-list fetch (bypasses the Manage menu)       |
 | `OpenCode Go: Diagnostics`                                | Report of Go models + request history                           |
-| `OpenCode Zen: Manage Provider`                           | Manage Zen API key, refresh models, test connection             |
+| `OpenCode Zen: Manage Provider`                           | Test connection, refresh models, configure utility models       |
 | `OpenCode Zen: Refresh Models`                            | Force a fresh Zen model-list fetch (bypasses the Manage menu)   |
 | `OpenCode Zen: Diagnostics`                               | Report of Zen models + request history                          |
 | `OpenCode: Model Picker Diagnostics`                      | All registered models (Go + Zen + Copilot) side-by-side         |
@@ -474,7 +473,7 @@ Inline suggestions, next-edit suggestions, semantic search, and embedding-backed
 <details>
 <summary><b>Where is my API key stored?</b></summary>
 
-In VS Code's **SecretStorage** — the same encrypted store used by GitHub auth. It never leaves your machine and is never sent anywhere except directly to `opencode.ai`.
+In your VS Code **language-models configuration** — add it via **Chat: Manage Language Models → Add Models… → OpenCode Go / OpenCode Zen**. VS Code stores the key in its encrypted language-models storage, it never leaves your machine, and it is only sent to `opencode.ai`.
 
 </details>
 

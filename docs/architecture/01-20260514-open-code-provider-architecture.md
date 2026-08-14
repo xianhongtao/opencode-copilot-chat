@@ -97,8 +97,7 @@ The native provider configuration schema is declared in `package.json` under `co
 
 | Command                                                   | Purpose                                                                    |
 | --------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `OpenCode Go: Manage Provider`                            | Legacy fallback key management, refresh, and connection test               |
-| `OpenCode Go: Set API Key`                                | Legacy fallback key storage                                                |
+| `OpenCode Go: Manage Provider`                            | Refresh models, test connection, configure utility models                  |
 | `OpenCode Go: Remove/Re-add Provider in Language Models`  | Toggle `opencodego.enabled` (remove/re-add the provider, requires reload)  |
 | `OpenCode Zen: Remove/Re-add Provider in Language Models` | Toggle `opencodezen.enabled` (remove/re-add the provider, requires reload) |
 | `OpenCode Go: Diagnostics`                                | Go model and transport diagnostics                                         |
@@ -106,7 +105,7 @@ The native provider configuration schema is declared in `package.json` under `co
 | `OpenCode: Model Picker Diagnostics`                      | Cross-provider model metadata comparison                                   |
 | `OpenCode: Set Thinking Effort...`                        | Global thinking-mode helper for supported families                         |
 
-The recommended setup path is still VS Code's native **Language Models** UI. The legacy commands remain for diagnostics and fallback compatibility.
+The recommended — and only — setup path is VS Code's native **Language Models** UI ("+ Add Models"). The `Set API Key` command and the legacy key-management menu items were removed (the old single `opencodego.apiKey` secret could not represent both Go and Zen keys); the remaining manage commands cover refresh, connection testing, and diagnostics.
 
 ---
 
@@ -119,14 +118,14 @@ For model discovery (`provideLanguageModelChatInformation`), the extension resol
 1. Read `options.configuration.apiKey` (the native BYOK value) if VS Code supplied one.
 2. If step 1 produced nothing, fall back to `SecretStorage` unconditionally.
 
-The unconditional fallback (since 0.5.0, [#86](https://github.com/ltmoerdani/opencode-copilot-chat/issues/86)) covers users who stored the key via the extension command `OpenCode Go: Set API Key` instead of the native BYOK flow. It mirrors Copilot's own `AbstractLanguageModelChatProvider`, which always falls back to its own storage when `configuration.apiKey` is absent. A per-vendor flag (`hasConfiguredByokGroup`) suppresses the groupless call once a native BYOK group exists, so models are not listed twice ([#106](https://github.com/ltmoerdani/opencode-copilot-chat/issues/106)). A group call whose `configuration` is present but carries no API key is treated as a **per-model configuration group** (only `settings`, created when the user picks e.g. `reasoningEffort` in the model picker) and returns no models, so the groupless call remains the single source; per-model settings still apply at request time via `modelConfiguration` ([#131](https://github.com/ltmoerdani/opencode-copilot-chat/issues/131)).
+The fallback is an internal mirror of Copilot's own `AbstractLanguageModelChatProvider`, which always falls back to its own storage when `configuration.apiKey` is absent. Since the `Set API Key` command was removed, the only writer is the BYOK group resolution itself: when a non-agent provider resolves a key it persists it into its **per-vendor** secret (`opencodego.apiKey` / `opencodezen.apiKey`, resolved via `secretKeyFor()` in `src/config.ts`), so agent-host variants and cold-start requests inherit it. A per-vendor flag (`hasConfiguredByokGroup`) suppresses the groupless call once a native BYOK group exists, so models are not listed twice ([#106](https://github.com/ltmoerdani/opencode-copilot-chat/issues/106)). A group call whose `configuration` is present but carries no API key is treated as a **per-model configuration group** (only `settings`, created when the user picks e.g. `reasoningEffort` in the model picker) and returns no models, so the groupless call remains the single source; per-model settings still apply at request time via `modelConfiguration` ([#131](https://github.com/ltmoerdani/opencode-copilot-chat/issues/131)).
 
 Security rules:
 
 - Real API keys are never written to repository files.
 - Documentation must use placeholders only.
-- API keys should be entered through VS Code's native secret-backed provider configuration.
-- Legacy `SecretStorage` support remains only as a fallback path.
+- API keys are entered through VS Code's native secret-backed provider configuration ("+ Add Models"); there is no command-palette key entry.
+- `SecretStorage` remains only as an internal fallback (per-vendor, mirroring the BYOK group key for agent variants and cold-start requests).
 
 Safe placeholder example:
 
