@@ -1,4 +1,4 @@
-import { GO_VENDOR, ZEN_VENDOR, resolveBaseVendor, type ProviderRoutingDefinition } from "./providerTypes";
+import { GO_VENDOR, ZEN_VENDOR, resolveBaseVendor, type ProviderRoutingDefinition } from "../providerTypes";
 
 function isMessagesQwenModel(modelId: string): boolean {
   return /^qwen3\.(?:5|6)-plus(?:-free)?$/i.test(modelId) || /^qwen3\.7-max$/i.test(modelId);

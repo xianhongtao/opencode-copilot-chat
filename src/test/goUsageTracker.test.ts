@@ -4,7 +4,7 @@ import Module from "node:module";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
-import type { ModelCost } from "../metadata.js";
+import type { ModelCost } from "../models/metadata.js";
 import type { TransportRequestSummary } from "../streaming.js";
 import {
   GO_USAGE_LOG_KEY,

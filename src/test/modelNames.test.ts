@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatModelName, providerModelDisplayName } from "../modelNames.js";
+import { formatModelName, providerModelDisplayName } from "../models/modelNames.js";
 
 describe("provider model display names", () => {
   it("formats numeric model versions like the existing picker", () => {

@@ -7,7 +7,7 @@
  *
  * CONTRACT: pure only — no `vscode` import, no side effects.
  */
-import type { ResolvedModelMetadata } from "../metadata";
+import type { ResolvedModelMetadata } from "../models/metadata";
 import type { ThinkingSettings, ThinkingFamily, BuildThinkingPayloadOptions } from "./types";
 import { DeepSeekThinking } from "./deepseek";
 import { GlmThinking } from "./glm";

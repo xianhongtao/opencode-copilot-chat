@@ -7,7 +7,7 @@
  */
 import { BaseThinkingProvider } from "./base";
 import { schemaFromReasoningOptions, genericReasoningSchema, type ThinkingSchema } from "./schema";
-import type { ResolvedModelMetadata } from "../metadata";
+import type { ResolvedModelMetadata } from "../models/metadata";
 import type { ThinkingSettings, ThinkingFamily, BuildThinkingPayloadOptions } from "./types";
 
 export class FallbackThinking extends BaseThinkingProvider {

@@ -11,7 +11,7 @@ import * as vscode from "vscode";
 import { joinedTextContent } from "../responsesRequest";
 import { parseToolInput } from "../toolCallAccumulator";
 import { sanitizeToolSchema } from "./schema";
-import type { ModelLimits } from "../modelLimits";
+import type { ModelLimits } from "../models/modelLimits";
 import type { ApiMessage, ApiSettings } from "./types";
 
 export function buildGoogleGenerateContentBody(

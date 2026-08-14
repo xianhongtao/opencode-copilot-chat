@@ -3,7 +3,7 @@
  *
  * CONTRACT: pure functions only — no `vscode` import, no side effects.
  */
-import type { ResolvedModelMetadata } from "../metadata";
+import type { ResolvedModelMetadata } from "../models/metadata";
 
 /** A plain JSON-schema-like object; the caller adds the VS Code annotation. */
 export interface ThinkingSchema {

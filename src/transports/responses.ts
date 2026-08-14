@@ -1,5 +1,5 @@
 import type { StreamRequestOptions } from "../core/transport";
-import { normalizeResponsesFullResponse, normalizeResponsesStreamEvent } from "../routing";
+import { normalizeResponsesFullResponse, normalizeResponsesStreamEvent } from "../core/routing";
 import { createThinkTagFilter } from "./thinkTags";
 import { createReasoningDebugger, streamOpenCodeResponse } from "./engine";
 import { OpenAiResponseExtractor } from "./extractors";

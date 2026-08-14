@@ -12,8 +12,8 @@ import { buildResponsesRequestEnvelope, responsesInputItemsFromMessage } from ".
 import { thinkingProviderFor } from "../thinking";
 import { sanitizeToolSchema } from "./schema";
 import { messagesHaveImages } from "./shared";
-import type { ResolvedModelMetadata } from "../metadata";
-import type { ModelLimits } from "../modelLimits";
+import type { ResolvedModelMetadata } from "../models/metadata";
+import type { ModelLimits } from "../models/modelLimits";
 import type { ApiMessage, ApiSettings, OpenAiToolDefinition } from "./types";
 
 export function buildChatCompletionsRequestBody(

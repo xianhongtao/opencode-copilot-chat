@@ -1,5 +1,5 @@
 import type { BaseModelLimits } from "./metadata";
-import { UI_OUTPUT_TOKEN_RESERVE, MIN_TOKEN_ESTIMATE_SAFETY_MARGIN, TOKEN_ESTIMATE_SAFETY_RATIO } from "./config";
+import { UI_OUTPUT_TOKEN_RESERVE, MIN_TOKEN_ESTIMATE_SAFETY_MARGIN, TOKEN_ESTIMATE_SAFETY_RATIO } from "../config";
 
 export interface ModelLimits extends BaseModelLimits {
   advertisedContextWindow: number;

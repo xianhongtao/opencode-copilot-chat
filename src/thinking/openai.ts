@@ -7,7 +7,7 @@
  */
 import { BaseThinkingProvider } from "./base";
 import { schemaFromReasoningOptions, effortProperty, type ThinkingSchema } from "./schema";
-import type { ResolvedModelMetadata } from "../metadata";
+import type { ResolvedModelMetadata } from "../models/metadata";
 import type { ThinkingSettings, ThinkingFamily, BuildThinkingPayloadOptions } from "./types";
 
 const OPENAI_EFFORTS = ["off", "low", "medium", "high", "xhigh"] as const;

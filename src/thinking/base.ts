@@ -8,7 +8,7 @@
  *
  * CONTRACT: pure only — no `vscode` import, no side effects.
  */
-import type { ResolvedModelMetadata } from "../metadata";
+import type { ResolvedModelMetadata } from "../models/metadata";
 // Type-only import from the sibling registry module — erased at runtime, so
 // there is no circular dependency between the base class and the concrete
 // providers that extend it.

@@ -1,4 +1,4 @@
-import type { ModelCost } from "../metadata";
+import type { ModelCost } from "../models/metadata";
 
 /** Callback to resolve live model cost from the models.dev metadata cache. */
 export type CostResolver = (modelId: string) => ModelCost | undefined;

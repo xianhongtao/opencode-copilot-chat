@@ -12,7 +12,7 @@
  * CONTRACT: pure only — no `vscode` import, no side effects. The extension
  * provides the raw sources; this module resolves them.
  */
-import type { ResolvedModelMetadata } from "../metadata";
+import type { ResolvedModelMetadata } from "../models/metadata";
 import type { ThinkingSettings, ThinkingSource, ResolvedThinking, ThinkingOverride } from "./types";
 import { thinkingProviderFor } from "./provider";
 

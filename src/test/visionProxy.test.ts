@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildStableModelCapabilities } from "../modelCapabilities";
+import { buildStableModelCapabilities } from "../models/modelCapabilities";
 import {
   clearImageDescriptionCache,
   IMAGE_DESCRIPTION_CACHE_LIMIT,

@@ -323,7 +323,7 @@ const testCases: TestCase[] = [
 // The "new" budget is computed with the production calculateModelLimits so the
 // script verifies the real shipped behavior.
 
-import { calculateModelLimits } from "../src/modelLimits.js";
+import { calculateModelLimits } from "../src/models/modelLimits.js";
 
 function computeMaxTokens(promptTokens: number | undefined, contextWindow: number, maxOutputTokens: number): number {
   const limits = calculateModelLimits({ contextWindow, maxOutputTokens }, { maxInputTokens: contextWindow, promptTokens });

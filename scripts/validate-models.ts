@@ -17,7 +17,7 @@
 
 import { parseArgs } from "node:util";
 import { thinkingProviderFor, type ThinkingSettings } from "../src/thinking.js";
-import { resolveModelRouting } from "../src/routing.js";
+import { resolveModelRouting } from "../src/core/routing.js";
 import { buildOpenCodeGatewayAuthHeaders } from "../src/openCodeAuth.js";
 
 // ---------------------------------------------------------------------------

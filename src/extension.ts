@@ -17,8 +17,8 @@ import {
   type ModelMetadataFields,
   type ModelsDevResponse,
   type ResolvedModelMetadata,
-} from "./metadata";
-import { resolveModelRouting } from "./routing";
+} from "./models/metadata";
+import { resolveModelRouting } from "./core/routing";
 import { extractThinkingOverride, resolveThinkingConfig, thinkingFamily, thinkingProviderFor, type ThinkingSettings } from "./thinking";
 import { shouldEchoThinkingHistory, thinkingTextFromValue } from "./reasoningHistory";
 import { buildOpenCodeGatewayAuthHeaders } from "./openCodeAuth";
@@ -44,9 +44,9 @@ import { registerInlineCompletions } from "./autocomplete";
 import { completionUsageToSeries, type CompletionUsageDay } from "./autocomplete/usage";
 import { getImageDataUrlBase64Bytes, MAX_IMAGE_BASE64_BYTES, normalizeImageDataUrl } from "./imageNormalizer";
 import { imageDescriptionKey, lookupImageDescriptions, storeImageDescriptions } from "./visionProxyCache";
-import { providerModelDisplayName } from "./modelNames";
-import { buildStableModelCapabilities } from "./modelCapabilities";
-import { calculateModelLimits, type ModelLimits } from "./modelLimits";
+import { providerModelDisplayName } from "./models/modelNames";
+import { buildStableModelCapabilities } from "./models/modelCapabilities";
+import { calculateModelLimits, type ModelLimits } from "./models/modelLimits";
 import {
   buildAnthropicMessagesRequestBody,
   buildChatCompletionsRequestBody,
@@ -143,7 +143,7 @@ import {
   sleep,
   toFiniteNumber,
 } from "./utils";
-import { isFreeModel } from "./metadata";
+import { isFreeModel } from "./models/metadata";
 
 import { formatCacheHitRatio, formatUsageStatusBarText, formatUsageStatusBarTooltip, type UsageSnapshot } from "./usage/usage";
 import {

@@ -7,7 +7,7 @@ import {
   resolveModelMetadata,
   VISION_CAPABLE_MODELS,
   type CachedModelMetadataSnapshot,
-} from "../metadata.js";
+} from "../models/metadata.js";
 import { GO_VENDOR, ZEN_VENDOR } from "../providerTypes.js";
 
 /**

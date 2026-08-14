@@ -1,4 +1,4 @@
-import { GO_VENDOR, ZEN_VENDOR, type ProviderVendor, type AllProviderVendor } from "./providerTypes";
+import { GO_VENDOR, ZEN_VENDOR, type ProviderVendor, type AllProviderVendor } from "../providerTypes";
 
 export interface BaseModelLimits {
   contextWindow: number;
@@ -145,10 +145,10 @@ import {
   FREE_ZEN_MODEL_IDS,
   MODEL_METADATA_CACHE_TTL_MS,
   MODEL_METADATA_REVISION,
-} from "./config";
-import { positiveNumber } from "./utils";
+} from "../config";
+import { positiveNumber } from "../utils";
 
-export { MODELS_DEV_API_URL, MODEL_METADATA_REVISION, MODEL_METADATA_CACHE_KEY, MODEL_METADATA_CACHE_TTL_MS } from "./config";
+export { MODELS_DEV_API_URL, MODEL_METADATA_REVISION, MODEL_METADATA_CACHE_KEY, MODEL_METADATA_CACHE_TTL_MS } from "../config";
 
 const DEFAULT_MODEL_LIMITS: BaseModelLimits = {
   contextWindow: DEFAULT_MODEL_CONTEXT_WINDOW,
