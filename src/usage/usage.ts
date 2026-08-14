@@ -1,3 +1,5 @@
+import { formatTokenCount } from "../utils";
+
 export interface UsageSnapshot {
   promptTokens?: number;
   completionTokens?: number;
@@ -7,8 +9,6 @@ export interface UsageSnapshot {
   /** Computed credits (for VS Code session cost accumulation). */
   copilotCredits?: number;
 }
-
-import { formatTokenCount } from "./utils";
 
 export interface ProviderUsagePayload {
   prompt_tokens?: number;

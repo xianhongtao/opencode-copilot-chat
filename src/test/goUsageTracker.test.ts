@@ -14,7 +14,7 @@ import {
   GO_MAX_SESSIONS,
   GO_SERVER_USAGE_KEY,
 } from "../config.js";
-import type { GoUsageApiResponse } from "../goUsageSync";
+import type { GoUsageApiResponse } from "../usage/goUsageSync";
 import type { HistoryRow, UsageDaily, UsageLogEntry, UsageSummary } from "../goUsageTracker.js";
 import type { UsageSeries } from "../goUsageTracker.js";
 

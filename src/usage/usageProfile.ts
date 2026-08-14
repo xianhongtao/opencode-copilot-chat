@@ -4,9 +4,9 @@
  * @see issue #63
  */
 import * as vscode from "vscode";
-import { PROFILES_REGISTRY_KEY, ACTIVE_PROFILE_KEY, MIGRATED_KEY, LEGACY_FINGERPRINT } from "./config";
+import { PROFILES_REGISTRY_KEY, ACTIVE_PROFILE_KEY, MIGRATED_KEY, LEGACY_FINGERPRINT } from "../config";
 
-export { PROFILES_REGISTRY_KEY, ACTIVE_PROFILE_KEY, MIGRATED_KEY, LEGACY_SECRET_KEY, LEGACY_FINGERPRINT } from "./config";
+export { PROFILES_REGISTRY_KEY, ACTIVE_PROFILE_KEY, MIGRATED_KEY, LEGACY_SECRET_KEY, LEGACY_FINGERPRINT } from "../config";
 
 export interface UsageProfile {
   fingerprint: string;

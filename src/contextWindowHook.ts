@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as vscode from "vscode";
-import type { UsageSnapshot } from "./usage";
+import type { UsageSnapshot } from "./usage/usage";
 import { CONTEXT_HOOK_PROBE_DELAY_MS } from "./config";
 import { getErrorMessage, isRecord } from "./utils";
 

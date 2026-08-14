@@ -28,7 +28,7 @@ import {
   reportUsageToContextWindowForRequest,
   setContextWindowOutputBufferForRequest,
 } from "./contextWindowHookBridge";
-import { formatUsageLogLine } from "./usage";
+import { formatUsageLogLine } from "./usage/usage";
 import { parseToolInput, ToolCallAccumulator, type PendingToolCall } from "./toolCallAccumulator";
 import { getErrorMessage, isRecord, sleepWithCancellation } from "./utils";
 

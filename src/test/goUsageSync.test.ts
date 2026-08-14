@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fetchGoUsage, mergeServerUsage, GO_USAGE_API_URL, type GoUsageApiResponse } from "../goUsageSync";
+import { fetchGoUsage, mergeServerUsage, GO_USAGE_API_URL, type GoUsageApiResponse } from "../usage/goUsageSync";
 import type { UsageSummary } from "../goUsageTracker";
 
 /** Mirrors GO_LIMITS — kept literal so the test never loads goUsageTracker (vscode). */

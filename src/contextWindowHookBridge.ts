@@ -1,5 +1,5 @@
 import type { LanguageModelResponsePart2, Progress } from "vscode";
-import type { UsageSnapshot } from "./usage";
+import type { UsageSnapshot } from "./usage/usage";
 import { getErrorMessage } from "./utils";
 
 type ContextWindowHookModule = typeof import("./contextWindowHook.js");

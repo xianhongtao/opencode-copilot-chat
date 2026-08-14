@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { hasUsageSnapshot, toProviderUsagePayload, type UsageSnapshot } from "./usage";
+import { hasUsageSnapshot, toProviderUsagePayload, type UsageSnapshot } from "./usage/usage";
 
 export const OPENCODE_USAGE_DATA_MIME = "application/vnd.opencode.usage+json";
 export const COPILOT_USAGE_DATA_MIME = "usage";

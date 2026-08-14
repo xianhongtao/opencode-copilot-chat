@@ -1,4 +1,4 @@
-import type { UsageSummary } from "./goUsageTracker";
+import type { UsageSummary } from "./tracker";
 
 /**
  * Official OpenCode Go usage endpoint (upstream anomalyco/opencode#16513,
@@ -13,9 +13,9 @@ import type { UsageSummary } from "./goUsageTracker";
  * where `percent` is an integer 0–100 computed server-side and `resetsAt` is
  * an ISO timestamp.
  */
-import { GO_USAGE_API_URL, GO_USAGE_FETCH_TIMEOUT_MS } from "./config";
+import { GO_USAGE_API_URL, GO_USAGE_FETCH_TIMEOUT_MS } from "../config";
 
-export { GO_USAGE_API_URL, GO_USAGE_SYNC_TTL_MS, GO_USAGE_FETCH_TIMEOUT_MS } from "./config";
+export { GO_USAGE_API_URL, GO_USAGE_SYNC_TTL_MS, GO_USAGE_FETCH_TIMEOUT_MS } from "../config";
 
 export type GoUsagePeriodStatus = "ok" | "rate-limited";
 

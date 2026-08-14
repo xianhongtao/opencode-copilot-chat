@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import type { ExtensionContext } from "vscode";
 
-let mod: typeof import("../usageProfile.js");
+let mod: typeof import("../usage/usageProfile.js");
 
 function createMockContext(initial: Record<string, unknown> = {}): ExtensionContext {
   const store = new Map(Object.entries(initial));
@@ -42,7 +42,7 @@ moduleResolver._resolveFilename = function (request: string, parent: unknown, ..
 };
 
 before(async () => {
-  mod = await import("../usageProfile.js");
+  mod = await import("../usage/usageProfile.js");
 });
 
 describe("keyFingerprint", () => {

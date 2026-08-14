@@ -145,7 +145,7 @@ import {
 } from "./utils";
 import { isFreeModel } from "./metadata";
 
-import { formatCacheHitRatio, formatUsageStatusBarText, formatUsageStatusBarTooltip, type UsageSnapshot } from "./usage";
+import { formatCacheHitRatio, formatUsageStatusBarText, formatUsageStatusBarTooltip, type UsageSnapshot } from "./usage/usage";
 import {
   GoUsageTracker,
   GO_LIMITS,
@@ -170,7 +170,7 @@ import {
   renameProfile,
   nonLegacyCount,
   type UsageProfile,
-} from "./usageProfile";
+} from "./usage/usageProfile";
 
 /**
  * VS Code core settings the extension manages (auto-configures and reverts)
