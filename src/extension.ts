@@ -1,20 +1,17 @@
 import * as vscode from "vscode";
 import { registerInlineCompletions } from "./autocomplete";
+import { ensureAgentsWindowSupport, revertAgentsWindowSupport, warmModelPickerMetadata } from "./commands/agentsWindow";
+import { showModelPickerDiagnostics } from "./commands/diagnostics";
+import { showThinkingEffortPicker } from "./commands/thinkingPicker";
 import { configureUtilityModels, toggleProviderEnabled } from "./commands/providers";
 import {
-  AGENTS_BYOK_BRIDGE_STATE_KEY,
-  AGENT_HOST_BYOK_ENABLED_SETTING,
-  AGENT_HOST_BYOK_MINOR_VERSION,
   CONFIG_SECTION,
   DEFAULT_USAGE_CHART_DAYS,
-  EXTENSION_ID,
   SETTING_AGENTS_WINDOW,
   SETTING_AUTO_ENABLE_AGENTS_WINDOW,
   SETTING_SHOW_PROVIDER_PREFIX,
   SETTING_SHOW_USAGE_STATUS_BAR,
   SETTING_USAGE_CHART_DAYS,
-  SUPPORT_AGENTS_WINDOW_SETTING,
-  SUPPORT_AGENTS_WINDOW_STATE_KEY,
   secretKeyFor,
 } from "./config";
 import { GoUsageTracker, buildUsageQuickPickItems } from "./goUsageTracker";
@@ -23,9 +20,7 @@ import { OpenCodeProvider } from "./provider/OpenCodeProvider";
 import { getModelMetadataSnapshot } from "./models/metadataFetcher";
 import { GO_VENDOR, ZEN_VENDOR, AGENT_GO_VENDOR, AGENT_ZEN_VENDOR } from "./providerTypes";
 import { providerEnabledSetting } from "./providerEnablement";
-import { getSettings } from "./provider/settings";
 import { showVisionProxyPicker } from "./provider/visionProxy";
-import type { ThinkingSettings } from "./thinking";
 import { formatCount, formatTokenCount, formatUsd } from "./utils";
 import {
   LEGACY_FINGERPRINT,
@@ -414,173 +409,6 @@ export function activate(context: vscode.ExtensionContext) {
     resolveApiKey: async () => profileApiKeys.get(activeProfileFingerprint) ?? _extensionContext?.secrets.get(secretKeyFor(GO_VENDOR)),
   });
 }
-function isModernAgentHostVscode(): boolean {
-  const [major = 1, minor = 0] = vscode.version.split(".").map(Number);
-  return major > 1 || (major === 1 && minor >= AGENT_HOST_BYOK_MINOR_VERSION);
-}
-
-/**
- * Ensure the VS Code core settings that make OpenCode Go/Zen models usable in
- * the Agents window are enabled (issue #122):
- *
- * 1. `extensions.supportAgentsWindow.<id>` — the only way a code extension is
- *    allowed to run in the Agents window (sessions window) process. VS Code
- *    disables any extension with a `main` entry there by default, so without
- *    this setting the extension's `languageModelChatProviders` vendors are
- *    not registered in that window: neither the model picker nor the
- *    "+ Add Models" list can show OpenCode Go/Zen.
- * 2. `chat.agentHost.byokModels.enabled` (VS Code 1.129+) — the BYOK
- *    language-model bridge that mirrors extension BYOK models into
- *    agent-host sessions. Off by default and experimental.
- *
- * CONTRACT:
- * - Only writes the settings while the user keeps `opencodego.agentsWindow`
- *   and `opencodego.autoEnableAgentsWindow` on; the settings are merged with
- *   existing user values (never clobbering unrelated entries).
- * - Records in globalState which settings the extension flipped itself, so
- *   {@link revertAgentsWindowSupport} can restore them when the user disables
- *   the Agents feature.
- * - Both settings take effect after a window reload (extension host /
- *   agent host restart) — surface an actionable notification the first time
- *   anything was changed.
- */
-async function ensureAgentsWindowSupport(context: vscode.ExtensionContext): Promise<void> {
-  const opencodeCfg = vscode.workspace.getConfiguration(CONFIG_SECTION);
-  if (!opencodeCfg.get<boolean>(SETTING_AGENTS_WINDOW, true) || !opencodeCfg.get<boolean>(SETTING_AUTO_ENABLE_AGENTS_WINDOW, true)) {
-    return;
-  }
-
-  let changed = false;
-  const extensionCfg = vscode.workspace.getConfiguration("extensions");
-  const support = extensionCfg.get<Record<string, boolean>>(SUPPORT_AGENTS_WINDOW_SETTING, {});
-  if (!support[EXTENSION_ID]) {
-    await extensionCfg.update(SUPPORT_AGENTS_WINDOW_SETTING, { ...support, [EXTENSION_ID]: true }, vscode.ConfigurationTarget.Global);
-    await context.globalState.update(SUPPORT_AGENTS_WINDOW_STATE_KEY, true);
-    changed = true;
-  }
-
-  if (isModernAgentHostVscode()) {
-    const agentHostCfg = vscode.workspace.getConfiguration("chat.agentHost");
-    if (!agentHostCfg.get<boolean>(AGENT_HOST_BYOK_ENABLED_SETTING, false)) {
-      await agentHostCfg.update(AGENT_HOST_BYOK_ENABLED_SETTING, true, vscode.ConfigurationTarget.Global);
-      await context.globalState.update(AGENTS_BYOK_BRIDGE_STATE_KEY, true);
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    const reload = await vscode.window.showInformationMessage(
-      "OpenCode: enabled VS Code's Agents window support so OpenCode Go/Zen models can run in the Agents window. Reload the window for it to take effect.",
-      "Reload Now",
-    );
-    if (reload === "Reload Now") {
-      await vscode.commands.executeCommand("workbench.action.reloadWindow");
-    }
-  }
-}
-
-/**
- * Revert the core settings that {@link ensureAgentsWindowSupport} enabled on
- * this machine (and only those — settings the user configured manually are
- * left untouched).
- */
-async function revertAgentsWindowSupport(context: vscode.ExtensionContext): Promise<void> {
-  const extensionCfg = vscode.workspace.getConfiguration("extensions");
-  if (context.globalState.get<boolean>(SUPPORT_AGENTS_WINDOW_STATE_KEY)) {
-    const support = extensionCfg.get<Record<string, boolean>>(SUPPORT_AGENTS_WINDOW_SETTING, {});
-    if (support[EXTENSION_ID]) {
-      const next: Record<string, boolean> = Object.fromEntries(Object.entries(support).filter(([id]) => id !== EXTENSION_ID));
-      await extensionCfg.update(
-        SUPPORT_AGENTS_WINDOW_SETTING,
-        Object.keys(next).length > 0 ? next : undefined,
-        vscode.ConfigurationTarget.Global,
-      );
-    }
-    await context.globalState.update(SUPPORT_AGENTS_WINDOW_STATE_KEY, undefined);
-  }
-
-  if (context.globalState.get<boolean>(AGENTS_BYOK_BRIDGE_STATE_KEY)) {
-    await vscode.workspace
-      .getConfiguration("chat.agentHost")
-      .update(AGENT_HOST_BYOK_ENABLED_SETTING, false, vscode.ConfigurationTarget.Global);
-    await context.globalState.update(AGENTS_BYOK_BRIDGE_STATE_KEY, undefined);
-  }
-}
-
-async function warmModelPickerMetadata(): Promise<void> {
-  const vendors: string[] = [
-    ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(GO_VENDOR), true) ? [GO_VENDOR] : []),
-    ...(vscode.workspace.getConfiguration().get<boolean>(providerEnabledSetting(ZEN_VENDOR), true) ? [ZEN_VENDOR] : []),
-  ];
-  if (vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true) && vendors.length > 0) {
-    vendors.push(AGENT_GO_VENDOR, AGENT_ZEN_VENDOR);
-  }
-  await Promise.allSettled(vendors.map((v) => vscode.lm.selectChatModels({ vendor: v })));
-}
-
-async function showModelPickerDiagnostics(): Promise<void> {
-  const vendors: string[] = [GO_VENDOR, ZEN_VENDOR, "copilot"];
-  if (vscode.workspace.getConfiguration(CONFIG_SECTION).get<boolean>(SETTING_AGENTS_WINDOW, true)) {
-    vendors.splice(2, 0, AGENT_GO_VENDOR, AGENT_ZEN_VENDOR);
-  }
-  const sections: string[] = [];
-
-  for (const vendor of vendors) {
-    const models = await vscode.lm.selectChatModels({ vendor });
-    sections.push(`## vendor: ${vendor}`, "", `models: ${String(models.length)}`, "");
-    for (const model of models) {
-      const internalModel = model as unknown as { configurationSchema?: unknown; detail?: unknown };
-      const schema = internalModel.configurationSchema;
-      sections.push(
-        `### ${model.name}`,
-        "",
-        `- id: \`${model.id}\``,
-        `- family: \`${model.family}\``,
-        `- version: \`${model.version}\``,
-        `- vendor: \`${model.vendor}\``,
-        `- detail: \`${typeof internalModel.detail === "string" ? internalModel.detail : ""}\``,
-        `- schema:`,
-        "```json",
-        JSON.stringify(schema ?? null, null, 2),
-        "```",
-        "",
-      );
-    }
-  }
-
-  const doc = await vscode.workspace.openTextDocument({
-    content: ["# OpenCode Model Picker Diagnostics", "", ...sections].join("\n"),
-    language: "markdown",
-  });
-  await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
-}
-
-async function showThinkingEffortPicker(): Promise<void> {
-  const families: { label: string; key: keyof ThinkingSettings; options: string[] }[] = [
-    { label: "DeepSeek (deepseek-v4-*)", key: "deepseek", options: ["off", "low", "medium", "high", "max"] },
-    { label: "GLM (glm-5, glm-5.1, glm-5.2)", key: "glm", options: ["off", "high", "max"] },
-    { label: "Kimi (kimi-k2.*)", key: "kimi", options: ["on", "off"] },
-    { label: "Mimo (mimo-v2.*)", key: "mimo", options: ["off", "low", "medium", "high"] },
-    { label: "MiniMax (minimax-m*)", key: "minimax", options: ["off", "on"] },
-    { label: "OpenAI GPT (gpt-*)", key: "openai", options: ["off", "low", "medium", "high", "xhigh"] },
-    { label: "Qwen (qwen3.*)", key: "qwen", options: ["auto", "on", "off"] },
-    { label: "Qwen Thinking Budget", key: "qwenBudget", options: ["auto", "4096", "16384", "32768", "81920"] },
-  ];
-  const settings = getSettings().thinking;
-  const family = await vscode.window.showQuickPick(
-    families.map((f) => ({ label: f.label, description: `current: ${settings[f.key]}`, family: f })),
-    { placeHolder: "Pick a model family to configure Thinking" },
-  );
-  if (!family) return;
-  const choice = await vscode.window.showQuickPick(family.family.options, {
-    placeHolder: `Set ${family.family.label} → Thinking value`,
-  });
-  if (!choice) return;
-  const cfg = vscode.workspace.getConfiguration(`${CONFIG_SECTION}.thinking`);
-  await cfg.update(family.family.key, choice, vscode.ConfigurationTarget.Global);
-  vscode.window.showInformationMessage(`OpenCode Thinking — ${family.family.label}: ${choice}`);
-}
-
 export async function deactivate(): Promise<void> {
   // no-op: experimental context indicator hooks removed in 0.1.8
 }
