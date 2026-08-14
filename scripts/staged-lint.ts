@@ -23,7 +23,12 @@ import pc from "picocolors";
 
 const root = path.resolve(import.meta.dirname, "..");
 
-const bin = (name: string): string => path.join(root, "node_modules", ".bin", name);
+const bin = (name: string): string => {
+  const base = path.join(root, "node_modules", ".bin", name);
+  // On Windows the npm shims are `.cmd` files and must be spawned through the
+  // shell; spawning the extension-less shim yields ENOENT.
+  return process.platform === "win32" ? `${base}.cmd` : base;
+};
 
 const SRC_DIRS = ["src", "scripts"];
 const TS_EXT = new Set([".ts", ".tsx", ".js", ".cjs", ".cts"]);
@@ -35,7 +40,12 @@ interface CommandResult {
 }
 
 function run(cmd: string, args: string[]): CommandResult {
-  const res: SpawnSyncReturns<string> = spawnSync(cmd, args, { cwd: root, encoding: "utf8" });
+  const res: SpawnSyncReturns<string> = spawnSync(cmd, args, {
+    cwd: root,
+    encoding: "utf8",
+    // Windows cannot exec `.cmd` shims directly; route through the shell.
+    shell: process.platform === "win32",
+  });
   return { status: res.status, output: `${res.stdout}${res.stderr}`.trim() };
 }
 
