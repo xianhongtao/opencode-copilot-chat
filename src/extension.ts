@@ -14,7 +14,8 @@ import {
   SETTING_USAGE_CHART_DAYS,
   secretKeyFor,
 } from "./config";
-import { GoUsageTracker, buildUsageQuickPickItems } from "./goUsageTracker";
+import { GoUsageTracker } from "./usage/tracker";
+import { buildUsageQuickPickItems } from "./usage/formatting";
 import { PROVIDERS } from "./provider/definitions";
 import { OpenCodeProvider } from "./provider/OpenCodeProvider";
 import { getModelMetadataSnapshot } from "./models/metadataFetcher";

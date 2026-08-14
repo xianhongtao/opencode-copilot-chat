@@ -5,7 +5,7 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import type { ModelCost } from "../models/metadata.js";
-import type { TransportRequestSummary } from "../streaming.js";
+import type { TransportRequestSummary } from "../core/transport.js";
 import {
   GO_USAGE_LOG_KEY,
   GO_USAGE_BASELINE_KEY,
@@ -15,8 +15,8 @@ import {
   GO_SERVER_USAGE_KEY,
 } from "../config.js";
 import type { GoUsageApiResponse } from "../usage/goUsageSync";
-import type { HistoryRow, UsageDaily, UsageLogEntry, UsageSummary } from "../goUsageTracker.js";
-import type { UsageSeries } from "../goUsageTracker.js";
+import type { UsageLogEntry, UsageSummary } from "../usage/tracker.js";
+import type { HistoryRow, UsageDaily, UsageSeries } from "../usage/history.js";
 
 // ── Types (populated by dynamic import in before()) ────────────────────────
 
@@ -152,14 +152,16 @@ describe("goUsageTracker", () => {
   // (vscode mock is already installed via Module._resolveFilename above)
 
   before(async () => {
-    const mod = await import("../goUsageTracker.js");
-    estimateCost = mod.estimateCost;
-    GoUsageTracker = mod.GoUsageTracker as GoUsageTrackerConstructor;
-    sumDailyUsage = mod.sumDailyUsage;
-    buildUsageSeries = mod.buildUsageSeries;
-    isCwdInWorkspace = mod.isCwdInWorkspace;
-    normalizeCwd = mod.normalizeCwd;
-    startOfLocalDay = mod.startOfLocalDay;
+    const trackerMod = await import("../usage/tracker.js");
+    const pricingMod = await import("../usage/pricing.js");
+    const historyMod = await import("../usage/history.js");
+    estimateCost = pricingMod.estimateCost;
+    GoUsageTracker = trackerMod.GoUsageTracker as GoUsageTrackerConstructor;
+    sumDailyUsage = historyMod.sumDailyUsage;
+    buildUsageSeries = historyMod.buildUsageSeries;
+    isCwdInWorkspace = trackerMod.isCwdInWorkspace;
+    normalizeCwd = trackerMod.normalizeCwd;
+    startOfLocalDay = trackerMod.startOfLocalDay;
   });
 
   // ════════════════════════════════════════════════════════════════════════

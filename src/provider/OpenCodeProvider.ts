@@ -13,13 +13,11 @@ import {
 import { resolveModelRouting } from "../core/routing";
 import { extractThinkingOverride, resolveThinkingConfig, thinkingFamily, thinkingProviderFor } from "../thinking";
 import { buildOpenCodeGatewayAuthHeaders } from "../openCodeAuth";
-import {
-  streamAnthropicMessages as runStreamAnthropicMessages,
-  streamChatCompletions as runStreamChatCompletions,
-  streamGoogleGenerateContent as runStreamGoogleGenerateContent,
-  streamResponsesApi as runStreamResponsesApi,
-  type TransportRequestSummary,
-} from "../streaming";
+import { streamAnthropicMessages as runStreamAnthropicMessages } from "../transports/anthropic";
+import { streamChatCompletions as runStreamChatCompletions } from "../transports/chatCompletions";
+import { streamGoogleGenerateContent as runStreamGoogleGenerateContent } from "../transports/google";
+import { streamResponsesApi as runStreamResponsesApi } from "../transports/responses";
+import type { TransportRequestSummary } from "../core/transport";
 import { GO_VENDOR, ZEN_VENDOR, resolveBaseVendor, type ProviderVendor } from "../providerTypes";
 import { providerEnabledSetting } from "../providerEnablement";
 import { configureUtilityModels, toggleProviderEnabled } from "../commands/providers";
@@ -74,7 +72,7 @@ import {
   updateUsageStatusBar,
 } from "../usage/dashboard";
 import { formatCacheHitRatio } from "../usage/usage";
-import { estimateCost } from "../goUsageTracker";
+import { estimateCost } from "../usage/pricing";
 import { resolveResponseApiKey } from "../apiKeyResolution";
 import { clearOpenCodeModelMetadataCache, getOpenCodeModelMetadata } from "../models/metadataFetcher";
 import { convertMessage, normalizeMessages, trimOldImagesFromHistoryInPlace } from "./messages";

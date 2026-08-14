@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fetchGoUsage, mergeServerUsage, GO_USAGE_API_URL, type GoUsageApiResponse } from "../usage/goUsageSync";
-import type { UsageSummary } from "../goUsageTracker";
+import type { UsageSummary } from "../usage/tracker";
 
 /** Mirrors GO_LIMITS — kept literal so the test never loads goUsageTracker (vscode). */
 const LIMITS = { session: 12, weekly: 30, monthly: 60 };

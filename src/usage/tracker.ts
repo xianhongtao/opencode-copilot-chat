@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { ModelCost } from "../models/metadata";
-import type { TransportRequestSummary } from "../streaming";
+import type { TransportRequestSummary } from "../core/transport";
 import { fetchGoUsage, mergeServerUsage, GO_USAGE_SYNC_TTL_MS, type GoUsageApiResponse } from "./goUsageSync";
 import {
   GO_LIMITS,
