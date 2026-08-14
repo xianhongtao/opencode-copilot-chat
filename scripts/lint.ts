@@ -9,7 +9,12 @@ import pc from "picocolors";
 
 const root = path.resolve(import.meta.dirname, "..");
 
-const bin = (name: string): string => path.join(root, "node_modules", ".bin", name);
+const bin = (name: string): string => {
+  const base = path.join(root, "node_modules", ".bin", name);
+  // On Windows the npm shims are `.cmd` files and must be spawned through the
+  // shell; spawning the extension-less shim yields ENOENT.
+  return process.platform === "win32" ? `${base}.cmd` : base;
+};
 
 // Strip markdownlint-cli2 banner/summary noise and prettier's status header.
 const NOISE = /^(markdownlint-cli2 v|Finding:|Linting:|Summary:|Checking formatting\.\.\.)/;
@@ -45,7 +50,12 @@ const steps: LintStep[] = [
 console.log(pc.bold("Lint"));
 let failed = false;
 for (const step of steps) {
-  const res = spawnSync(step.cmd, step.args, { cwd: root, encoding: "utf8" });
+  const res = spawnSync(step.cmd, step.args, {
+    cwd: root,
+    encoding: "utf8",
+    // Windows cannot exec `.cmd` shims directly; route through the shell.
+    shell: process.platform === "win32",
+  });
   const output = clean(`${res.stdout}${res.stderr}`);
   if (res.status === 0) {
     console.log(`  ${pc.green("✔")} ${step.label}`);

@@ -1,0 +1,10 @@
+# Normalize every text file to LF in the index and on checkout. This keeps
+# `npm run lint` (prettier + shellcheck, which require LF per .editorconfig)
+# green on Windows, where core.autocrlf=true would otherwise check files out
+# as CRLF. Binary files are untouched (text=auto detects them).
+* text=auto eol=lf
+
+# Shell scripts must stay LF: husky hooks (checked by shellcheck via
+# `npm run lint`) and any POSIX scripts break with CRLF on Windows checkouts.
+.husky/* text eol=lf
+*.sh text eol=lf
