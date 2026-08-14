@@ -2,6 +2,16 @@
 
 All notable changes to the **OpenCode Go BYOK Provider** extension are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- **`[Internal]` Per-provider Thinking strategy classes + single config authority.** The thinking/reasoning system is refactored from one monolithic builder into a per-provider strategy (`src/thinking/`): an interface + factory (`provider.ts`), a shared base class, and one class per model family (`deepseek`, `glm`, `kimi`, `minimax`, `openai`, `qwen`, `mimo`, `fallback`). Each provider now owns its reasoning picker schema, its request-payload mapping, and whether its `reasoning_content` is surfaced as chat content. Configuration resolves from a **single authority** — the VS Code per-model configuration (model picker / Manage), with workspace settings and per-family defaults as fallbacks — instead of competing sources (workspace + modelConfiguration + a `globalState` shadow copy + defaults). The shadow copy is removed, so a thinking effort chosen for one model can no longer silently leak onto another model or override an explicit "Off". Model IDs are normalized to `effectiveModelId` (the `::sk-***` fp suffix is gone), which also stops the per-model settings group from being recreated on every pick. Request builders are split out of `extension.ts` into per-endpoint modules (`src/request/{types,schema,shared,openai,anthropic,google}.ts`). Windows tooling fixes: `scripts/lint.ts` runs npm `.cmd` shims through the shell and a new `.gitattributes` enforces LF normalization, so `npm run lint` (prettier + shellcheck) is green on Windows; `scripts/staged-lint.ts` and `isCwdInWorkspace` get the same treatment.
+
+### Fixed
+
+- **DeepSeek / Mimo thinking content no longer leaks into the chat transcript.** `treatReasoningAsContent` was mis-detecting native-reasoning families as "no reasoning in body" and echoing their `reasoning_content` as plain chat text. The decision now comes from the provider strategy (always `false` for DeepSeek and Mimo), so chain-of-thought stays in the thinking panel.
+
 ## [0.6.0] — 2026-08-13
 
 ### Added
